@@ -23,4 +23,5 @@ run:
       ln -snf $(pwd)/cf-release/src/smoke-tests /var/vcap/packages/smoke-tests/src/github.com/cloudfoundry/cf-smoke-tests
       set -o pipefail
       git --git-dir paas-cf/.git log -1 > smoke-tests-log/last-commit.log
+      export CF_TRACE=true
       /var/vcap/jobs/smoke-tests/bin/run | tee smoke-tests-log/smoke-tests.log
