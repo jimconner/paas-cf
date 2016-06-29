@@ -34,6 +34,9 @@ stemcells:
   - alias: default
     name: bosh-aws-xen-hvm-ubuntu-trusty-go_agent
     version: 3232.4
+  - alias: router
+    name: bosh-aws-xen-hvm-ubuntu-trusty-go_agent
+    version: 3232.6
 
 update:
   canaries: 0
