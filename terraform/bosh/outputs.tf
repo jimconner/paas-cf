@@ -47,7 +47,7 @@ output "compiled_cache_bucket_host" {
 }
 
 output "compiled_cache_bucket_name" {
-  value = "shared-cf-bosh-blobstore-${var.aws_account}"
+  value = "shared-bosh-blobstore-cf-${var.aws_account}"
 }
 
 output "bosh_blobstore_bucket_name" {
