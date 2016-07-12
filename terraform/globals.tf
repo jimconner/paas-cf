@@ -90,7 +90,7 @@ variable "microbosh_static_private_ip" {
 /* Operators will mainly be from the office. See https://sites.google.com/a/digital.cabinet-office.gov.uk/gds-internal-it/news/aviationhouse-sourceipaddresses for details. */
 variable "admin_cidrs" {
   description = "CSV of CIDR addresses with access to operator/admin endpoints"
-  default     = "80.194.77.90/32,80.194.77.100/32,85.133.67.244/32"
+  default     = "0.0.0.0/0"
 }
 
 /* Note: This is overridden in prod.tfvars to allow specific tenant access */
