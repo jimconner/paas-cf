@@ -2,7 +2,7 @@ releases:
   - name: os-conf
     version: commit-a2bc2ab32248c8edf7c4790b33902893b1f4db66
   - name: collectd
-    version: 0.4
+    version: commit-258bfb5563eca15a58603364bb1954d4514b276d
 
 addons:
   - name: os-configuration
