@@ -110,7 +110,6 @@ resources:
     type: git
     source:
       uri: https://github.com/alphagov/paas-collectd-boshrelease.git
-      tag_filter: {{cf_collectd_version}}
 
   - name: os-conf-boshrelease
     type: git
