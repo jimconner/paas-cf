@@ -8,14 +8,22 @@ help:
 SHELLCHECK=shellcheck
 YAMLLINT=yamllint
 
+DEPLOY_ENV_MAX_LENGTH=12
+DEPLOY_ENV_VALID_LENGTH=$(shell if [ $$(echo -n $(DEPLOY_ENV) | wc -c) -gt $(DEPLOY_ENV_MAX_LENGTH) ]; then echo ""; else echo "OK"; fi)
+DEPLOY_ENV_VALID_CHARS=$(shell if echo $(DEPLOY_ENV) | grep -q '^[a-zA-Z0-9-]*$$'; then echo "OK"; else echo ""; fi)
+
 check-env-vars:
 	$(if ${DEPLOY_ENV},,$(error Must pass DEPLOY_ENV=<name>))
+	$(if ${DEPLOY_ENV_VALID_LENGTH},,$(error Sorry, DEPLOY_ENV ($(DEPLOY_ENV)) has a max length of $(DEPLOY_ENV_MAX_LENGTH), otherwise derived names will be too long))
+	$(if ${DEPLOY_ENV_VALID_CHARS},,$(error Sorry, DEPLOY_ENV ($(DEPLOY_ENV)) must use only alphanumeric chars and hyphens, otherwise derived names will be malformatted))
 
 test: spec lint_yaml lint_terraform lint_shellcheck lint_concourse lint_ruby ## Run linting tests
 
 spec:
 	cd scripts &&\
 		BUNDLE_GEMFILE=Gemfile bundle exec rspec
+	cd concourse/scripts &&\
+		go test
 	cd concourse/scripts &&\
 		bundle exec rspec
 	cd manifests/shared &&\
@@ -45,7 +53,14 @@ lint_concourse:
 
 .PHONY: lint_ruby
 lint_ruby:
-	bundle exec rubocop -l --config rubocop.yml
+	bundle exec govuk-lint-ruby
+
+.PHONY: list_merge_keys
+list_merge_keys: ## List all GPG keys allowed to sign merge commits.
+	@for key in $$(cat .gpg-id); do \
+		printf "$${key}: "; \
+		gpg --list-keys --with-colons $$key 2> /dev/null | awk -F: '/^pub/ {found = 1; print $$10} END {if (found != 1) {print "*** not found in local keychain ***"}}'; \
+	done
 
 .PHONY: globals
 globals:
@@ -62,6 +77,7 @@ dev: globals check-env-vars ## Set Environment to DEV
 	$(eval export APPS_DNS_ZONE_NAME=${DEPLOY_ENV}.apps.lab2.paasmule.win)
 	$(eval export SKIP_COMMIT_VERIFICATION=true)
 	$(eval export ENV_SPECIFIC_CF_MANIFEST=cf-default.yml)
+	$(eval export ENABLE_HEALTHCHECK_DB=false)
 	@true
 
 .PHONY: ci
@@ -90,6 +106,7 @@ staging: globals check-env-vars ## Set Environment to Staging
 	$(eval export ALERT_EMAIL_ADDRESS=the-multi-cloud-paas-team+staging@digital.cabinet-office.gov.uk)
 	$(eval export NEW_ACCOUNT_EMAIL_ADDRESS=${ALERT_EMAIL_ADDRESS})
 	$(eval export ENV_SPECIFIC_CF_MANIFEST=cf-default.yml)
+	$(eval export ENABLE_CF_ACCEPTANCE_TESTS=false)
 	@true
 
 .PHONY: prod
@@ -104,6 +121,7 @@ prod: globals check-env-vars ## Set Environment to Production
 	$(eval export ALERT_EMAIL_ADDRESS=the-multi-cloud-paas-team+prod@digital.cabinet-office.gov.uk)
 	$(eval export NEW_ACCOUNT_EMAIL_ADDRESS=${ALERT_EMAIL_ADDRESS})
 	$(eval export ENV_SPECIFIC_CF_MANIFEST=cf-prod.yml)
+	$(eval export ENABLE_CF_ACCEPTANCE_TESTS=false)
 	@true
 
 .PHONY: bootstrap
@@ -126,22 +144,25 @@ pipelines: ## Upload pipelines to Concourse
 showenv: ## Display environment information
 	$(eval export TARGET_CONCOURSE=deployer)
 	@echo CONCOURSE_IP=$$(aws ec2 describe-instances \
-		--filters 'Name=tag:Name,Values=concourse/0' "Name=key-name,Values=${DEPLOY_ENV}_key_pair" \
+		--filters 'Name=tag:Name,Values=concourse/0' "Name=key-name,Values=${DEPLOY_ENV}_concourse_key_pair" \
 		--query 'Reservations[].Instances[].PublicIpAddress' --output text)
 	@concourse/scripts/environment.sh
 
 .PHONY: manually_upload_certs
 CERT_PASSWORD_STORE_DIR?=~/.paas-pass-high
 manually_upload_certs: ## Manually upload to AWS the SSL certificates for public facing endpoints
+	$(if ${ACTION},,$(error Must pass ACTION=<plan|apply|...>))
 	# check password store and if varables are accesible
 	$(if ${CERT_PASSWORD_STORE_DIR},,$(error Must pass CERT_PASSWORD_STORE_DIR=<path_to_password_store>))
 	$(if $(wildcard ${CERT_PASSWORD_STORE_DIR}),,$(error Password store ${CERT_PASSWORD_STORE_DIR} does not exist))
-	@terraform/scripts/manually-upload-certs.sh
+	@terraform/scripts/manually-upload-certs.sh ${ACTION}
 
 .PHONY: pingdom
 pingdom: ## Use custom Terraform provider to set up Pingdom check
+	$(if ${ACTION},,$(error Must pass ACTION=<plan|apply|...>))
 	$(eval export PASSWORD_STORE_DIR?=~/.paas-pass)
-	@terraform/scripts/set-up-pingdom.sh
+	$(eval export PINGDOM_CONTACT_IDS=11089310)
+	@terraform/scripts/set-up-pingdom.sh ${ACTION}
 
 merge_pr: ## Merge a PR. Must specify number in a PR=<number> form.
 	$(if ${PR},,$(error Must pass PR=<number>))
@@ -155,3 +176,5 @@ find_diverged_forks: ## Check all github forks belonging to paas to see if they'
 run_job: check-env-vars ##  Unbind paas-cf of $JOB in create-bosh-cloudfoundry pipeline and then trigger it
 	$(if ${JOB},,$(error Must pass JOB=<name>))
 	./concourse/scripts/run_job.sh ${JOB}
+ssh_concourse: check-env-vars ## SSH to the concourse server
+	@./concourse/scripts/ssh.sh

@@ -55,17 +55,22 @@ vagrant plugin install vagrant-aws
 export AWS_ACCESS_KEY_ID=XXXXXXXXXX
 export AWS_SECRET_ACCESS_KEY=YYYYYYYYYY
 ```
+And optionally:
+
+```
+export AWS_DEFAULT_REGION=eu-west-1
+```
 
 The access keys are only required to spin up the *Bootstrap Concourse*. From
-that point on they won't be required as all the pipelines will use [instance
-profiles][] to make calls to AWS. The policies for these are defined in the
-repo [aws-account-wide-terraform][] (not public because it also contains
-state files).
+that point on they won't be required (except by manual actions) as all the
+pipelines will use [instance profiles][] to make calls to AWS. The policies for
+these are defined in the repo [aws-account-wide-terraform][]
+(not public because it also contains state files).
 
 [instance profiles]: http://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html
 [aws-account-wide-terraform]: https://github.gds/government-paas/aws-account-wide-terraform
 
-* Declare you environment name using the variable DEPLOY_ENV. It must be 18 characters maximum and contain only alphanumeric characters and hyphens.
+* Declare your environment name using the variable DEPLOY_ENV.
 
 ```
 $ export DEPLOY_ENV=environment-name
@@ -169,9 +174,9 @@ To interact with a CloudFoundry environment you will need the following:
 
 - the `cf` command line tool ([installation instructions](https://github.com/cloudfoundry/cli#downloads))
 - `API_ENDPOINT` from `make dev showenv`
-- `uaa_admin_password` from `cf-secrets.yml` in the state bucket
+- `uaa_admin_password` from `cf-secrets.yml` in the state bucket (you can run `aws s3 cp "s3://${DEPLOY_ENV}-state/cf-secrets.yml" - | grep uaa_admin_password` to see it)
 
-Then you can use `cf login` as [documented here](http://docs.cloudfoundry.org/cf-cli/getting-started.html#login).
+Then you can use `cf login` as [documented here](http://docs.cloudfoundry.org/cf-cli/getting-started.html#login), using the `admin` user.
 
 You will need to supply the `--skip-ssl-validation` argument if you are
 using a development environment.
@@ -216,6 +221,19 @@ can use SELF_UPDATE_PIPELINE environment variable, set to false (true is default
 ## Optionally deploy to a different AWS account
 
 See [doc/non_dev_deployments.md](doc/non_dev_deployments.md).
+
+## Optionally disable run of acceptance tests
+
+Acceptance tests can be optionally disabled by setting the environment
+variable `ENABLE_CF_ACCEPTANCE_TESTS=false`.
+
+```
+ENABLE_CF_ACCEPTANCE_TESTS=false make dev pipelines
+```
+
+It is enabled in all the environments except in `staging` and `prod`.
+This will only disable the execution of the test, but the job will
+be still configured in concourse.
 
 ## Optionally run specific job in the create-bosh-cloudfoundry pipeline
 
@@ -292,11 +310,10 @@ You can get both from command line. You will need [aws-cli](#aws-cli), to do thi
 ```
 eval $(make dev showenv | grep CONCOURSE_IP=)
 
-aws s3 cp "s3://${DEPLOY_ENV}-state/id_rsa" . && \
-chmod 400 id_rsa && \
-ssh-add $(pwd)/id_rsa
+aws s3 cp "s3://${DEPLOY_ENV}-state/concourse_id_rsa" ./concourse_id_rsa && \
+  chmod 400 concourse_id_rsa
 
-ssh vcap@$CONCOURSE_IP
+ssh -i concourse_id_rsa -o IdentitiesOnly=yes -o UserKnownHostsFile=/dev/null vcap@$CONCOURSE_IP
 ```
 
 If you get a "Too many authentication failures for vcap" message it is likely that you've got too many keys registered with your ssh-agent and it will fail to authenticate before trying the correct key - generally it will only allow three keys to be tried before disconnecting you. You can list all the keys registered with your ssh-agent with `ssh-add -l` and remove unwanted keys with `ssh-add -d PATH_TO_KEY`.
@@ -356,18 +373,6 @@ providing them to the interactive configure command.
 [variety of other methods]: http://docs.aws.amazon.com/cli/latest/userguide/installing.html
 [access keys using environment variables]: http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html#cli-environment
 
-## Pingdom checks
-
-### Requirements
-
-* The credential store set up (paas-pass).
-* Installation of the Pingdom Terraform provider. Instructions for this are documented when running the make target for the first time.
-* Correct AWS credentials for the environment you are setting up checks for. For those developers with AWS CLI config files, the [AWS CLI Documentation](http://docs.aws.amazon.com/cli/latest/topic/config-vars.html#id1) states environment variables have the highest precedence.
-
-### Setting up the checks
-
-Run `make ENV pingdom` to set up the Pingdom checks.
-
 ## Creating Users
 
 Once you got the OK from the Product and Delivery managers to create
@@ -397,3 +402,6 @@ and click on the link in the resulting email
 
 ## BOSH failover
 Visit [BOSH failover page](https://github.com/alphagov/paas-cf/blob/master/doc/bosh_failover.md)
+
+## Pingdom checks
+Visit [Pingdom documentation page](https://github.com/alphagov/paas-cf/blob/master/doc/pingdom.md)

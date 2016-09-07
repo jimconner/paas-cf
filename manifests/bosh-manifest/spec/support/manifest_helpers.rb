@@ -1,12 +1,18 @@
+require 'singleton'
 require 'open3'
 require 'yaml'
 
 module ManifestHelpers
-  def manifest_with_defaults
-    @@manifest_with_defaults ||= load_default_manifest
+  class Cache
+    include Singleton
+    attr_accessor :manifest_with_defaults
   end
 
-  private
+  def manifest_with_defaults
+    Cache.instance.manifest_with_defaults ||= load_default_manifest
+  end
+
+private
 
   def load_default_manifest
     output, error, status = Open3.capture3(
@@ -17,7 +23,7 @@ module ManifestHelpers
         File.expand_path("../../fixtures/bosh-secrets.yml", __FILE__),
         File.expand_path("../../fixtures/bosh-ssl-certificates.yml", __FILE__),
         File.expand_path("../../fixtures/bosh-terraform-outputs.yml", __FILE__),
-        File.expand_path("../../fixtures/vpc-terraform-outputs.yml", __FILE__)
+        File.expand_path("../../../../shared/deployments/collectd.yml", __FILE__)
       ].join(' ')
     )
     expect(status).to be_success, "build_manifest.sh exited #{status.exitstatus}, stderr:\n#{error}"
@@ -30,7 +36,7 @@ module ManifestHelpers
   def deep_freeze(object)
     case object
     when Hash
-      object.each { |_k,v| deep_freeze(v) }
+      object.each { |_k, v| deep_freeze(v) }
     when Array
       object.each { |v| deep_freeze(v) }
     end

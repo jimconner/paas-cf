@@ -29,11 +29,13 @@ releases:
     version: 0.0.4
   - name: routing
     version: commit-0bad6993f4cb87fa6213fa957f4e8eacbd22f762
+  - name: rep
+    version: 0.0.1
 
 stemcells:
   - alias: default
     name: bosh-aws-xen-hvm-ubuntu-trusty-go_agent
-    version: 3262.2
+    version: "3232.11"
 
 update:
   canaries: 0

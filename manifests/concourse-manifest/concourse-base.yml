@@ -3,11 +3,11 @@ name: concourse
 
 releases:
   - name: concourse
-    url: https://bosh.io/d/github.com/concourse/concourse?v=0.74.0
-    sha1: c99ef709e9d4468ac25cca31dd5be1444417011d
-  - name: garden-linux
-    url: https://bosh.io/d/github.com/cloudfoundry-incubator/garden-linux-release?v=0.334.0
-    sha1: 85170c5089fa4ff317f139c2f1da024860dbea85
+    url: https://github.com/alphagov/paas-concourse/releases/download/v1.5.1.gds1/concourse-1.5.1.gds1.tgz
+    sha1: 363c959751685658593661855339418dafed02e5
+  - name: garden-runc
+    url: https://bosh.io/d/github.com/cloudfoundry-incubator/garden-runc-release?v=0.4.0
+    sha1: b59fb02eeae70104486251c82099316af04b77b7
   # When updating the version of the CPI here, the version used in the
   # bosh-init container must also be updated so that the cached CPI compile
   # will be used.
@@ -19,16 +19,16 @@ resource_pools:
   - name: concourse
     network: concourse
     stemcell:
-      url: https://bosh.io/d/stemcells/bosh-aws-xen-hvm-ubuntu-trusty-go_agent?v=3232.4
-      sha1: ac920cae17c7159dee3bf1ebac727ce2d01564e9
+      url: https://bosh.io/d/stemcells/bosh-aws-xen-hvm-ubuntu-trusty-go_agent?v=3262.5
+      sha1: 13c73b82675742012ba3ded6528524b8f3ce9ec3
     cloud_properties:
-      instance_type: t2.medium
+      instance_type: m4.large
       availability_zone: (( grab terraform_outputs.zone0 ))
       iam_instance_profile: deployer-concourse
       elbs:
       - (( grab terraform_outputs.concourse_elb_name ))
       ephemeral_disk:
-        size: 50240
+        size: 102400
         type: gp2
     env:
       bosh:
@@ -69,7 +69,8 @@ jobs:
       - {release: concourse, name: groundcrew}
       - {release: concourse, name: tsa}
       - {release: concourse, name: baggageclaim}
-      - {release: garden-linux, name: garden}
+      - {release: garden-runc, name: garden}
+      - {release: collectd, name: collectd}
 
     networks:
       - name: public
@@ -80,22 +81,25 @@ jobs:
         default: [dns, gateway]
 
     properties:
-      atc:
-        external_url: (( concat "https://" terraform_outputs.concourse_dns_name ))
-        basic_auth_username: admin
-        basic_auth_password: (( grab secrets.concourse_atc_password ))
-        publicly_viewable: true
-        postgresql:
-          address: 127.0.0.1:5432
-          role: &atc-role
-            name: atc
-            password: dummy-password
+      external_url: (( concat "https://" terraform_outputs.concourse_dns_name ))
+      basic_auth_username: admin
+      basic_auth_password: (( grab secrets.concourse_atc_password ))
+      publicly_viewable: true
+
+      databases:
+        - name: atc
+          role: atc
+          password: dummy-password
 
       postgresql:
-        databases: [{name: atc}]
-        roles:
-          - *atc-role
+        address: 127.0.0.1:5432
+        database: atc
+        role:
+          name: atc
+          password: dummy-password
       tsa:
+        host: 127.0.0.1
+        port: 2222
         forward_host: 127.0.0.1
         atc:
           address: 127.0.0.1:8080
@@ -103,15 +107,14 @@ jobs:
         listen_network: tcp
         listen_address: 0.0.0.0:7777
         graph_cleanup_threshold_in_mb: 3072
-      groundcrew:
-        baggageclaim:
-          url: "http://127.0.0.1:7788"
-        tsa:
-          host: 127.0.0.1
-        additional_resource_types:
-          - { type: s3-iam, image: "docker:///governmentpaas/s3-resource" }
-          - { type: semver-iam, image: "docker:///governmentpaas/semver-resource" }
-          - { type: git-gpg, image: "docker:///governmentpaas/git-resource" }
+        max_containers: 1024
+        network_pool: "10.254.0.0/20"
+      baggageclaim:
+        url: "http://127.0.0.1:7788"
+      collectd:
+        hostname_prefix: concourse_
+        interval: (( grab meta.collectd.interval ))
+        config: (( grab meta.collectd.config ))
 
 cloud_provider:
   template: {name: aws_cpi, release: bosh-aws-cpi}
@@ -120,14 +123,14 @@ cloud_provider:
     host: (( grab terraform_outputs.concourse_elastic_ip ))
     port: 22
     user: vcap
-    private_key: id_rsa # Appears to be relative to working dir
+    private_key: concourse_id_rsa # Appears to be relative to working dir
 
   mbus: (( concat "https://mbus:" secrets.concourse_nats_password "@" terraform_outputs.concourse_elastic_ip ":6868" ))
 
   properties:
     aws:
       credentials_source: env_or_profile
-      default_key_name: (( grab terraform_outputs.key_pair_name ))
+      default_key_name: (( grab terraform_outputs.concourse_key_pair_name ))
       default_security_groups:
       - (( grab terraform_outputs.concourse_security_group ))
       - (( grab terraform_outputs.ssh_security_group ))

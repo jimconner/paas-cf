@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 SCRIPT=$0
+
+# shellcheck disable=SC1090
+source "${SCRIPT_DIR}/common.sh"
 
 ###########################################################################
 # Defaults
@@ -11,15 +15,17 @@ SUBJECT='Welcome to the Government PaaS'
 # shellcheck disable=SC2016,SC1078
 MESSAGE='Hello,
 
-Your account has been created for the  Government PaaS service.
+Your account for the Government PaaS service has been created.
 
-Your organisation is \"${ORG}\" and your login and password:
+Your organisation is \"${ORG}\" and your login and password are:
 
  - login: ${EMAIL}
  - password: ${PASSWORD}
 
-To get started you can follow our Quick Setup Guide:
+To get started, look at our Quick Setup Guide:
 https://government-paas-developer-docs.readthedocs.io/en/latest/getting_started/quick_setup_guide/
+
+You should make sure to change your password, as explained in the Quick Setup Guide.
 
 Regards,
 Government PaaS team.
@@ -63,33 +69,11 @@ EOF
   exit 1
 }
 
-load_colors() {
-  if [ -t 1 ] ; then
-    export ESC_SEQ="\x1b["
-    export COL_RESET="${ESC_SEQ}39;49;00m"
-    export COL_LIGHT="${ESC_SEQ}1m"
-    export COL_DIM="${ESC_SEQ}2m"
-    export COL_BLINK="${ESC_SEQ}5m"
-    export COL_RED="${ESC_SEQ}31m"
-    export COL_GREEN="${ESC_SEQ}32m"
-    export COL_YELLOW="${ESC_SEQ}33m"
-    export COL_BLUE="${ESC_SEQ}34m"
-    export COL_MAGENTA="${ESC_SEQ}35m"
-    export COL_CYAN="${ESC_SEQ}36m"
-  fi
-}
-
-abort() {
-  echo -e "${COL_RED:-}${COL_LIGHT:-}ERROR:${COL_RESET:-} $*" 1>&2
-  exit 1
-}
-
 abort_usage() {
   echo -e "${COL_RED:-}${COL_LIGHT:-}ERROR:${COL_RESET:-} $*" 1>&2
   usage
   exit 1
 }
-
 
 check_params_and_environment() {
   if [ -z "${EMAIL:-}" ]; then
@@ -121,6 +105,14 @@ generate_password() {
 create_org_space() {
   cf create-org "${ORG}"
   cf create-space "${DEFAULT_SPACE}" -o "${ORG}"
+
+  # cf create-{org|space} has the side-effect of giving roles in the org/space
+  # to the user making the request. We don't want this, so have to undo it.
+  local admin_user
+  admin_user=$(cf target | awk '/User:/ { print $2}')
+  cf unset-org-role "${admin_user}" "${ORG}" OrgManager
+  cf unset-space-role "${admin_user}" "${ORG}" "${DEFAULT_SPACE}" SpaceManager
+  cf unset-space-role "${admin_user}" "${ORG}" "${DEFAULT_SPACE}" SpaceDeveloper
 }
 
 create_user() {

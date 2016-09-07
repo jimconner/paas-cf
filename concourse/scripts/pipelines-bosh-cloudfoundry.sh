@@ -41,9 +41,10 @@ prepare_environment() {
   cf_graphite_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.graphite.version "${cf_manifest_dir}/040-graphite.yml")
   cf_grafana_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.grafana.version "${cf_manifest_dir}/040-graphite.yml")
   cf_aws_broker_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.aws-broker.version "${cf_manifest_dir}/050-rds-broker.yml")
-  cf_os_conf_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.os-conf.version "${cf_manifest_dir}/runtime/runtime.yml")
-  cf_collectd_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.collectd.version "${cf_manifest_dir}/runtime/runtime.yml")
+  cf_os_conf_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.os-conf.version "${cf_manifest_dir}/../runtime-config/runtime-config-base.yml")
   cf_routing_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.routing.version "${cf_manifest_dir}/000-base-cf-deployment.yml")
+  cf_rep_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.rep.version "${cf_manifest_dir}/000-base-cf-deployment.yml")
+  cf_logsearch_for_cloudfoundry_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.logsearch-for-cloudfoundry.version "${cf_manifest_dir}/030-logsearch.yml")
 
   if [ -z "${SKIP_COMMIT_VERIFICATION:-}" ] ; then
     gpg_ids="[$(xargs < "${SCRIPT_DIR}/../../.gpg-id" | tr ' ' ',')]"
@@ -76,8 +77,9 @@ cf_graphite_version: ${cf_graphite_version}
 cf_grafana_version: ${cf_grafana_version}
 cf_aws_broker_version: ${cf_aws_broker_version}
 cf_os_conf_version: ${cf_os_conf_version}
-cf_collectd_version: ${cf_collectd_version}
 cf_routing_version: ${cf_routing_version}
+cf_rep_version: ${cf_rep_version}
+cf_logsearch_for_cloudfoundry_version: ${cf_logsearch_for_cloudfoundry_version}
 cf_env_specific_manifest: ${ENV_SPECIFIC_CF_MANIFEST}
 paas_cf_tag_filter: ${PAAS_CF_TAG_FILTER:-}
 TAG_PREFIX: ${TAG_PREFIX:-}
@@ -86,9 +88,11 @@ apps_dns_zone_name: ${APPS_DNS_ZONE_NAME}
 git_concourse_pool_clone_full_url_ssh: ${git_concourse_pool_clone_full_url_ssh}
 ALERT_EMAIL_ADDRESS: ${ALERT_EMAIL_ADDRESS:-}
 NEW_ACCOUNT_EMAIL_ADDRESS: ${NEW_ACCOUNT_EMAIL_ADDRESS:-}
+enable_healthcheck_db: ${ENABLE_HEALTHCHECK_DB:-}
 bosh_az: ${bosh_az}
 bosh_manifest_state: bosh-manifest-state-${bosh_az}.json
 bosh_fqdn: bosh.${SYSTEM_DNS_ZONE_NAME}
+enable_cf_acceptance_tests: ${ENABLE_CF_ACCEPTANCE_TESTS:-true}
 EOF
   echo -e "pipeline_lock_git_private_key: |\n  ${git_id_rsa//$'\n'/$'\n'  }"
 }

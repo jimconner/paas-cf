@@ -28,6 +28,7 @@ groups:
       - bosh-terraform
       - generate-bosh-config
       - bosh-deploy
+      - bosh-cli
   - name: cloudfoundry
     jobs:
       - pre-deploy
@@ -64,6 +65,22 @@ groups:
   - name: health
     jobs:
       - continuous-smoke-tests
+
+resource_types:
+- name: git-gpg
+  type: docker-image
+  source:
+    repository: governmentpaas/git-resource
+
+- name: s3-iam
+  type: docker-image
+  source:
+    repository: governmentpaas/s3-resource
+
+- name: semver-iam
+  type: docker-image
+  source:
+    repository: governmentpaas/semver-resource
 
 resources:
   - name: pipeline-trigger
@@ -106,12 +123,6 @@ resources:
       uri: https://github.com/alphagov/paas-aws-broker-boshrelease.git
       tag_filter: {{cf_aws_broker_version}}
 
-  - name: collectd-boshrelease
-    type: git
-    source:
-      uri: https://github.com/alphagov/paas-collectd-boshrelease.git
-      tag_filter: {{cf_collectd_version}}
-
   - name: os-conf-boshrelease
     type: git
     source:
@@ -124,6 +135,19 @@ resources:
     source:
       uri: https://github.com/alphagov/paas-routing-release.git
       tag_filter: {{cf_routing_version}}
+      branch: gds_master
+
+  - name: rep-boshrelease
+    type: git
+    source:
+      uri: https://github.com/alphagov/paas-rep-boshrelease.git
+      tag_filter: {{cf_rep_version}}
+
+  - name: logsearch-for-cloudfoundry-boshrelease
+    type: git
+    source:
+      uri: https://github.com/alphagov/paas-logsearch-for-cloudfoundry.git
+      tag_filter: {{cf_logsearch_for_cloudfoundry_version}}
       branch: gds_master
 
   - name: graphite-nozzle
@@ -188,12 +212,34 @@ resources:
       region_name: {{aws_region}}
       versioned_file: {{bosh_manifest_state}}
 
+  - name: bosh-ssh-private-key
+    type: s3-iam
+    source:
+      bucket: {{state_bucket}}
+      versioned_file: bosh_id_rsa
+      region_name: {{aws_region}}
+
+  - name: bosh-ssh-public-key
+    type: s3-iam
+    source:
+      bucket: {{state_bucket}}
+      versioned_file: bosh_id_rsa.pub
+      region_name: {{aws_region}}
+
   - name: ssh-private-key
     type: s3-iam
     source:
       bucket: {{state_bucket}}
       versioned_file: id_rsa
       region_name: {{aws_region}}
+
+  - name: ssh-public-key
+    type: s3-iam
+    source:
+      bucket: {{state_bucket}}
+      versioned_file: id_rsa.pub
+      region_name: {{aws_region}}
+
 
   - name: git-ssh-private-key
     type: s3-iam
@@ -244,6 +290,20 @@ resources:
       region_name: {{aws_region}}
       versioned_file: cloud-config.yml
 
+  - name: runtime-config
+    type: s3-iam
+    source:
+      bucket: {{state_bucket}}
+      region_name: {{aws_region}}
+      versioned_file: runtime-config.yml
+
+  - name: deployed-healthcheck
+    type: s3-iam
+    source:
+      bucket: {{state_bucket}}
+      region_name: {{aws_region}}
+      versioned_file: healthcheck-deployed
+
   - name: cf-release
     type: git
     source:
@@ -288,7 +348,10 @@ jobs:
       - task: init-pipeline-pool
         config:
           platform: linux
-          image: docker:///governmentpaas/git-ssh
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/git-ssh
           inputs:
             - name: paas-cf
             - name: git-ssh-private-key
@@ -329,7 +392,10 @@ jobs:
       - task: self-update-pipeline
         config:
           platform: linux
-          image: docker:///governmentpaas/self-update-pipelines
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/self-update-pipelines
           inputs:
             - name: paas-cf
             - name: concourse-manifest
@@ -346,7 +412,10 @@ jobs:
       - task: bootstrap-s3-state
         config:
           platform: linux
-          image: docker:///governmentpaas/curl-ssl
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/curl-ssl
           inputs:
             - name: paas-cf
           run:
@@ -364,6 +433,11 @@ jobs:
                 paas-cf/concourse/scripts/s3init.sh {{state_bucket}} cf-certs.tar.gz paas-cf/concourse/init_files/empty.tar.gz
                 paas-cf/concourse/scripts/s3init.sh {{state_bucket}} cf-certs.tfstate paas-cf/concourse/init_files/terraform.tfstate.tpl
                 paas-cf/concourse/scripts/s3init.sh {{state_bucket}} git-keys.tar.gz paas-cf/concourse/init_files/empty.tar.gz
+                paas-cf/concourse/scripts/s3init.sh {{state_bucket}} bosh_id_rsa paas-cf/concourse/init_files/zero_bytes
+                paas-cf/concourse/scripts/s3init.sh {{state_bucket}} bosh_id_rsa.pub paas-cf/concourse/init_files/zero_bytes
+                paas-cf/concourse/scripts/s3init.sh {{state_bucket}} id_rsa paas-cf/concourse/init_files/zero_bytes
+                paas-cf/concourse/scripts/s3init.sh {{state_bucket}} id_rsa.pub paas-cf/concourse/init_files/zero_bytes
+                paas-cf/concourse/scripts/s3init.sh {{state_bucket}} healthcheck-deployed paas-cf/concourse/init_files/string-no
 
   - name: generate-secrets
     serial_groups: [cf-deploy]
@@ -379,11 +453,18 @@ jobs:
           - get: bosh-secrets
           - get: cf-certs
           - get: cf-secrets
+          - get: bosh-ssh-private-key
+          - get: bosh-ssh-public-key
+          - get: ssh-private-key
+          - get: ssh-public-key
 
       - task: generate-bosh-CA
         config:
           platform: linux
-          image: docker:///governmentpaas/certstrap
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/certstrap
           inputs:
             - name: paas-cf
             - name: bosh-CA
@@ -407,98 +488,189 @@ jobs:
                   mkdir out
                   tar -xvzf generated-bosh-CA/bosh-CA.tar.gz -C out
                 fi
-                ./paas-cf/concourse/scripts/file-to-yaml.sh secrets bosh_ca_cert out/bosh-CA.crt > generated-bosh-CA/bosh-ca-cert.yml
+                ./paas-cf/concourse/scripts/file_to_yaml.sh secrets bosh_ca_cert out/bosh-CA.crt > generated-bosh-CA/bosh-ca-cert.yml
         on_success:
           put: bosh-CA
           params:
             file: generated-bosh-CA/bosh-CA.tar.gz
 
-      - task: generate-bosh-secrets
-        config:
-          platform: linux
-          image: docker:///ruby#2.2-slim
-          inputs:
-            - name: paas-cf
-            - name: bosh-secrets
-              path: existing-bosh-secrets
-          outputs:
-            - name: generated-bosh-secrets
-          run:
-            path: sh
-            args:
-              - -e
-              - -c
-              - |
-                ./paas-cf/manifests/bosh-manifest/scripts/generate-bosh-secrets.rb \
-                  --existing-secrets existing-bosh-secrets/bosh-secrets.yml \
-                  > generated-bosh-secrets/bosh-secrets.yml
-                ls -l generated-bosh-secrets
-        on_success:
-          put: bosh-secrets
-          params:
-            file: generated-bosh-secrets/bosh-secrets.yml
+      - aggregate:
+        - task: generate-bosh-secrets
+          config:
+            platform: linux
+            image_resource:
+              type: docker-image
+              source:
+                repository: ruby
+                tag: 2.2-slim
+            inputs:
+              - name: paas-cf
+              - name: bosh-secrets
+                path: existing-bosh-secrets
+            outputs:
+              - name: generated-bosh-secrets
+            run:
+              path: sh
+              args:
+                - -e
+                - -c
+                - |
+                  ./paas-cf/manifests/bosh-manifest/scripts/generate-bosh-secrets.rb \
+                    --existing-secrets existing-bosh-secrets/bosh-secrets.yml \
+                    > generated-bosh-secrets/bosh-secrets.yml
+                  ls -l generated-bosh-secrets
+          on_success:
+            put: bosh-secrets
+            params:
+              file: generated-bosh-secrets/bosh-secrets.yml
 
-      - task: generate-cf-certs
-        config:
-          platform: linux
-          image: docker:///governmentpaas/certstrap
-          inputs:
-            - name: bosh-CA
-            - name: paas-cf
-            - name: cf-certs
-          outputs:
-            - name: generated-cf-certs
-          params:
-            SYSTEM_DNS_ZONE_NAME: {{system_dns_zone_name}}
-            APPS_DNS_ZONE_NAME: {{apps_dns_zone_name}}
-          run:
-            path: sh
-            args:
-              - -e
-              - -c
-              - |
-                mkdir certs
-                echo "Extracting extant certs"
-                tar -xvzf cf-certs/cf-certs.tar.gz -C certs
+        - task: generate-bosh-ssh-keypair
+          config:
+            platform: linux
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/git-ssh
+            inputs:
+              - name: paas-cf
+              - name: bosh-ssh-private-key
+              - name: bosh-ssh-public-key
+            outputs:
+              - name: generated-bosh-ssh-private-key
+              - name: generated-bosh-ssh-public-key
+            run:
+              path: sh
+              args:
+                - -e
+                - -c
+                - |
+                  if [ -s bosh-ssh-private-key/bosh_id_rsa ] ; then
+                    echo "BOSH private key non-zero size, skipping generation..."
+                    echo "Key uploads will fail and this is OK as no new keys have been generated."
+                    exit 0
+                  fi
 
-                ./paas-cf/manifests/cf-manifest/scripts/generate-cf-certs.sh certs bosh-CA/bosh-CA.tar.gz
+                  echo "Generating new ssh key pair for BOSH..."
+                  ssh-keygen -t rsa -b 4096 -f bosh_id_rsa -N ''
+                  cp bosh_id_rsa generated-bosh-ssh-private-key
+                  cp bosh_id_rsa.pub generated-bosh-ssh-public-key
+          on_success:
+            try:
+              aggregate:
+                - put: bosh-ssh-private-key
+                  params:
+                    file: generated-bosh-ssh-private-key/bosh_id_rsa
+                - put: bosh-ssh-public-key
+                  params:
+                    file: generated-bosh-ssh-public-key/bosh_id_rsa.pub
 
-                echo "Generating uaa_jwt_signing public key from private key"
-                openssl rsa -pubout -in certs/uaa_jwt_signing.key -out certs/uaa_jwt_verification.pem
+        - task: generate-deployments-ssh-keypair
+          config:
+            platform: linux
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/git-ssh
+            inputs:
+              - name: paas-cf
+              - name: ssh-private-key
+              - name: ssh-public-key
+            outputs:
+              - name: generated-ssh-private-key
+              - name: generated-ssh-public-key
+            run:
+              path: sh
+              args:
+                - -e
+                - -c
+                - |
+                  if [ -s ssh-private-key/id_rsa ] ; then
+                    echo "Deployments private key non-zero size, skipping generation..."
+                    echo "Key uploads will fail and this is OK as no new keys have been generated."
+                    exit 0
+                  fi
 
-                echo "Creating updated cert tarball"
-                cd certs
-                tar -cvzf ../generated-cf-certs/cf-certs.tar.gz .
-        on_success:
-          put: cf-certs
-          params:
-            file: generated-cf-certs/cf-certs.tar.gz
+                  echo "Generating new ssh key pair for deployments..."
+                  ssh-keygen -t rsa -b 4096 -f id_rsa -N ''
+                  cp id_rsa generated-ssh-private-key
+                  cp id_rsa.pub generated-ssh-public-key
+          on_success:
+            try:
+              aggregate:
+                - put: ssh-private-key
+                  params:
+                    file: generated-ssh-private-key/id_rsa
+                - put: ssh-public-key
+                  params:
+                    file: generated-ssh-public-key/id_rsa.pub
 
-      - task: generate-cf-secrets
-        config:
-          platform: linux
-          image: docker:///ruby#2.2-slim
-          inputs:
-            - name: paas-cf
-            - name: cf-secrets
-              path: existing-cf-secrets
-          outputs:
-            - name: generated-cf-secrets
-          run:
-            path: sh
-            args:
-              - -c
-              - -e
-              - |
-                ./paas-cf/manifests/cf-manifest/scripts/generate-cf-secrets.rb \
-                  --existing-secrets existing-cf-secrets/cf-secrets.yml \
-                  > generated-cf-secrets/cf-secrets.yml
-                ls -l generated-cf-secrets
-        on_success:
-          put: cf-secrets
-          params:
-            file: generated-cf-secrets/cf-secrets.yml
+        - task: generate-cf-certs
+          config:
+            platform: linux
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/certstrap
+            inputs:
+              - name: bosh-CA
+              - name: paas-cf
+              - name: cf-certs
+            outputs:
+              - name: generated-cf-certs
+            params:
+              SYSTEM_DNS_ZONE_NAME: {{system_dns_zone_name}}
+              APPS_DNS_ZONE_NAME: {{apps_dns_zone_name}}
+            run:
+              path: sh
+              args:
+                - -e
+                - -c
+                - |
+                  mkdir certs
+                  echo "Extracting extant certs"
+                  tar -xvzf cf-certs/cf-certs.tar.gz -C certs
 
+                  ./paas-cf/manifests/cf-manifest/scripts/generate-cf-certs.sh certs bosh-CA/bosh-CA.tar.gz
+
+                  echo "Generating uaa_jwt_signing public key from private key"
+                  openssl rsa -pubout -in certs/uaa_jwt_signing.key -out certs/uaa_jwt_verification.pem
+
+                  echo "Creating updated cert tarball"
+                  cd certs
+                  tar -cvzf ../generated-cf-certs/cf-certs.tar.gz .
+          on_success:
+            put: cf-certs
+            params:
+              file: generated-cf-certs/cf-certs.tar.gz
+
+        - task: generate-cf-secrets
+          config:
+            platform: linux
+            image_resource:
+              type: docker-image
+              source:
+                repository: ruby
+                tag: 2.2-slim
+            inputs:
+              - name: paas-cf
+              - name: cf-secrets
+                path: existing-cf-secrets
+            outputs:
+              - name: generated-cf-secrets
+            run:
+              path: sh
+              args:
+                - -c
+                - -e
+                - |
+                  ./paas-cf/manifests/cf-manifest/scripts/generate-cf-secrets.rb \
+                    --existing-secrets existing-cf-secrets/cf-secrets.yml \
+                    > generated-cf-secrets/cf-secrets.yml
+                  ls -l generated-cf-secrets
+          on_success:
+            put: cf-secrets
+            params:
+              file: generated-cf-secrets/cf-secrets.yml
 
   - name: pre-deploy
     plan:
@@ -506,6 +678,7 @@ jobs:
           - get: pipeline-trigger
             passed: ['generate-secrets']
             trigger: true
+          - get: deployed-healthcheck
           - get: paas-cf
             passed: ['generate-secrets']
           - get: cf-secrets
@@ -520,11 +693,15 @@ jobs:
               - name: bosh-CA
               - name: paas-cf
               - name: cf-secrets
+              - name: deployed-healthcheck
               - name: pipeline-trigger
             params:
               SYSTEM_DNS_ZONE_NAME: {{system_dns_zone_name}}
               CF_ADMIN: admin
-            image: docker:///governmentpaas/cf-cli
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/cf-cli
             run:
               path: sh
               args:
@@ -532,6 +709,12 @@ jobs:
                 - -u
                 - -c
                 - |
+                  HEALTHCHECK_DEPLOYED=$(cat deployed-healthcheck/healthcheck-deployed)
+                  if [ "${HEALTHCHECK_DEPLOYED}" = "no" ]; then
+                    echo "Skipping availability tests because the healthcheck is not deployed"
+                    exit 0
+                  fi
+
                   ./paas-cf/concourse/scripts/import_bosh_ca.sh
 
                   CF_PASS=$(awk '/uaa_admin_password/ {print $2}' cf-secrets/cf-secrets.yml | tr -d '"')
@@ -558,6 +741,7 @@ jobs:
           - get: pipeline-trigger
             passed: ['generate-secrets']
             trigger: true
+          - get: deployed-healthcheck
           - get: paas-cf
             passed: ['generate-secrets']
           - get: bosh-CA
@@ -565,12 +749,16 @@ jobs:
       - task: run-tests
         config:
           platform: linux
-          image: docker:///governmentpaas/cf-acceptance-tests
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/cf-acceptance-tests
           inputs:
             - name: paas-cf
             - name: pipeline-trigger
             - name: concourse-manifest
             - name: bosh-CA
+            - name: deployed-healthcheck
           params:
             SKIP_SSL_VALIDATION: true
             APPS_DNS_ZONE_NAME: {{apps_dns_zone_name}}
@@ -584,6 +772,12 @@ jobs:
               - -e
               - -c
               - |
+                HEALTHCHECK_DEPLOYED=$(cat deployed-healthcheck/healthcheck-deployed)
+                if [ "${HEALTHCHECK_DEPLOYED}" = "no" ]; then
+                  echo "Skipping availability tests because the healthcheck is not deployed"
+                  exit 0
+                fi
+
                 ./paas-cf/concourse/scripts/import_bosh_ca.sh
 
                 export CONCOURSE_ATC_PASSWORD=$(awk '/basic_auth_password/ { print $2 }' concourse-manifest/concourse-manifest.yml | tr -d '"')
@@ -609,11 +803,17 @@ jobs:
           - get: bosh-tfstate
           - get: bosh-secrets
             passed: ['generate-secrets']
+          - get: bosh-ssh-public-key
+          - get: ssh-public-key
 
       - task: extract-terraform-variables
         config:
           platform: linux
-          image: docker:///ruby#2.2-slim
+          image_resource:
+            type: docker-image
+            source:
+              repository: ruby
+              tag: 2.2-slim
           inputs:
             - name: paas-cf
             - name: vpc-tfstate
@@ -637,11 +837,16 @@ jobs:
       - task: terraform-apply
         config:
           platform: linux
-          image: docker:///governmentpaas/terraform
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/terraform
           inputs:
             - name: paas-cf
             - name: terraform-variables
             - name: bosh-tfstate
+            - name: bosh-ssh-public-key
+            - name: ssh-public-key
           outputs:
             - name: updated-bosh-tfstate
           params:
@@ -659,7 +864,8 @@ jobs:
                 . terraform-variables/concourse.tfvars.sh
                 . terraform-variables/bosh-secrets.tfvars.sh
                 export TF_VAR_bosh_az="${BOSH_AZ}"
-
+                cp ssh-public-key/id_rsa.pub paas-cf/terraform/bosh
+                cp bosh-ssh-public-key/bosh_id_rsa.pub paas-cf/terraform/bosh
                 terraform apply -var env={{deploy_env}} -var-file=paas-cf/terraform/{{aws_account}}.tfvars \
                   -state=bosh-tfstate/bosh.tfstate -state-out=updated-bosh-tfstate/bosh.tfstate paas-cf/terraform/bosh
         ensure:
@@ -688,7 +894,11 @@ jobs:
       - task: extract_terraform_outputs
         config:
           platform: linux
-          image: docker:///ruby#2.2-slim
+          image_resource:
+            type: docker-image
+            source:
+              repository: ruby
+              tag: 2.2-slim
           inputs:
             - name: paas-cf
             - name: vpc-tfstate
@@ -711,7 +921,10 @@ jobs:
       - task: extract-bosh-CA
         config:
           platform: linux
-          image: docker:///governmentpaas/certstrap
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/certstrap
           inputs:
             - name: paas-cf
             - name: bosh-CA
@@ -726,12 +939,15 @@ jobs:
                 echo "The CA cert already exists, skipping generation..."
                 mkdir out
                 tar -xvzf bosh-CA/bosh-CA.tar.gz -C out
-                ./paas-cf/concourse/scripts/file-to-yaml.sh secrets bosh_ca_cert out/bosh-CA.crt > bosh-CA-yml/bosh-ca-cert.yml
+                ./paas-cf/concourse/scripts/file_to_yaml.sh secrets bosh_ca_cert out/bosh-CA.crt > bosh-CA-yml/bosh-ca-cert.yml
 
       - task: render-bosh-manifest
         config:
           platform: linux
-          image: docker:///governmentpaas/spruce
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/spruce
           inputs:
             - name: paas-cf
             - name: terraform-outputs
@@ -747,6 +963,7 @@ jobs:
               ./bosh-CA-yml/bosh-ca-cert.yml
               ./terraform-outputs/bosh.terraform-outputs.yml
               ./terraform-outputs/vpc.terraform-outputs.yml
+              ./paas-cf/manifests/shared/deployments/collectd.yml
           run:
             path: sh
             args:
@@ -754,7 +971,6 @@ jobs:
               - -c
               - |
                 ./paas-cf/manifests/shared/build_manifest.sh $BOSH_MANIFEST_STUBS > bosh-manifest/bosh-manifest.yml
-                /bin/cat bosh-manifest/bosh-manifest.yml
         on_success:
           put: bosh-manifest
           params:
@@ -771,16 +987,19 @@ jobs:
           - get: bosh-manifest
             passed: ['generate-bosh-config']
           - get: bosh-init-state
-          - get: ssh-private-key
+          - get: bosh-ssh-private-key
 
       - task: bosh-init-microbosh
         config:
           platform: linux
-          image: docker:///governmentpaas/bosh-init
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/bosh-init
           inputs:
             - name: bosh-manifest
             - name: bosh-init-state
-            - name: ssh-private-key
+            - name: bosh-ssh-private-key
           outputs:
             - name: bosh-init-working-dir
           params:
@@ -792,8 +1011,8 @@ jobs:
               - -c
               - |
                 mkdir -p bosh-init-working-dir/.ssh
-                cp ssh-private-key/id_rsa bosh-init-working-dir/.ssh/id_rsa
-                chmod 400 bosh-init-working-dir/.ssh/id_rsa
+                cp bosh-ssh-private-key/bosh_id_rsa bosh-init-working-dir/.ssh/bosh_id_rsa
+                chmod 400 bosh-init-working-dir/.ssh/bosh_id_rsa
                 cp bosh-manifest/bosh-manifest.yml bosh-init-working-dir/bosh-manifest.yml
                 cp bosh-init-state/"${BOSH_MANIFEST_STATE}" bosh-init-working-dir/bosh-manifest-state.json
                 bosh-init deploy bosh-init-working-dir/bosh-manifest.yml
@@ -826,7 +1045,10 @@ jobs:
       - task: upload-certs-to-aws
         config:
           platform: linux
-          image: docker:///governmentpaas/terraform
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/terraform
           inputs:
             - name: paas-cf
             - name: cf-certs-tfstate
@@ -870,7 +1092,10 @@ jobs:
       - task: retrieve-pingdom-probes-ips
         config:
           platform: linux
-          image: docker:///governmentpaas/curl-ssl
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/curl-ssl
           inputs:
             - name: paas-cf
           outputs:
@@ -892,7 +1117,11 @@ jobs:
       - task: extract-terraform-variables
         config:
           platform: linux
-          image: docker:///ruby#2.2-slim
+          image_resource:
+            type: docker-image
+            source:
+              repository: ruby
+              tag: 2.2-slim
           inputs:
             - name: paas-cf
             - name: vpc-tfstate
@@ -918,7 +1147,10 @@ jobs:
       - task: terraform-apply
         config:
           platform: linux
-          image: docker:///governmentpaas/terraform
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/terraform
           inputs:
             - name: terraform-variables
             - name: paas-cf
@@ -958,7 +1190,11 @@ jobs:
       - task: extract-cf-terraform-outputs
         config:
           platform: linux
-          image: docker:///ruby#2.2-slim
+          image_resource:
+            type: docker-image
+            source:
+              repository: ruby
+              tag: 2.2-slim
           inputs:
             - name: paas-cf
             - name: cf-tfstate
@@ -977,7 +1213,10 @@ jobs:
       - task: init-db
         config:
           platform: linux
-          image: docker:///governmentpaas/psql
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/psql
           inputs:
             - name: terraform-variables
             - name: paas-cf
@@ -1013,38 +1252,67 @@ jobs:
             passed: ['bosh-terraform']
           - get: cf-tfstate
             passed: ['cf-terraform']
-      - task: extract-terraform-outputs
-        config:
-          platform: linux
-          image: docker:///ruby#2.2-slim
-          inputs:
-            - name: paas-cf
-            - name: vpc-tfstate
-            - name: bosh-tfstate
-            - name: concourse-tfstate
-            - name: cf-tfstate
-          outputs:
-            - name: terraform-outputs
-          run:
-            path: sh
-            args:
-              - -e
-              - -c
-              - |
-                for state in vpc bosh concourse cf; do
-                  ./paas-cf/concourse/scripts/extract_terraform_state_to_yaml.rb \
-                    < $state-tfstate/$state.tfstate \
-                    > terraform-outputs/$state.yml
-                  ./paas-cf/concourse/scripts/extract_tf_vars_from_terraform_state.rb \
-                    < ${state}-tfstate/${state}.tfstate \
-                    > terraform-outputs/${state}.tfvars.sh
-                done
+      - aggregate:
+        - task: extract-terraform-outputs
+          config:
+            platform: linux
+            image_resource:
+              type: docker-image
+              source:
+                repository: ruby
+                tag: 2.2-slim
+            inputs:
+              - name: paas-cf
+              - name: vpc-tfstate
+              - name: bosh-tfstate
+              - name: concourse-tfstate
+              - name: cf-tfstate
+            outputs:
+              - name: terraform-outputs
+            run:
+              path: sh
+              args:
+                - -e
+                - -c
+                - |
+                  for state in vpc bosh concourse cf; do
+                    ./paas-cf/concourse/scripts/extract_terraform_state_to_yaml.rb \
+                      < $state-tfstate/$state.tfstate \
+                      > terraform-outputs/$state.yml
+                    ./paas-cf/concourse/scripts/extract_tf_vars_from_terraform_state.rb \
+                      < ${state}-tfstate/${state}.tfstate \
+                      > terraform-outputs/${state}.tfvars.sh
+                  done
+
+        - task: generate-grafana-dashboards-manifest
+          config:
+            platform: linux
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/json-minify
+            inputs:
+              - name: paas-cf
+            outputs:
+              - name: grafana-dashboards-manifest
+            run:
+              path: sh
+              args:
+                - -e
+                - -c
+                - |
+                  CF_MANIFEST_DIR=./paas-cf/manifests/cf-manifest
+                  ${CF_MANIFEST_DIR}/scripts/grafana-dashboards-manifest.rb ${CF_MANIFEST_DIR}/grafana \
+                    > grafana-dashboards-manifest/grafana-dashboards-manifest.yml
 
       - aggregate:
         - task: generate-cloud-config
           config:
             platform: linux
-            image: docker:///governmentpaas/spruce
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/spruce
             inputs:
               - name: paas-cf
               - name: terraform-outputs
@@ -1073,13 +1341,17 @@ jobs:
         - task: generate-cf-manifest
           config:
             platform: linux
-            image: docker:///governmentpaas/spruce
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/spruce
             inputs:
               - name: paas-cf
               - name: terraform-outputs
               - name: cf-secrets
               - name: cf-certs
               - name: bosh-CA
+              - name: grafana-dashboards-manifest
             outputs:
               - name: cf-manifest
             params:
@@ -1089,6 +1361,8 @@ jobs:
                 ./terraform-outputs/*.yml
                 ./cf-secrets/cf-secrets.yml
                 ./certs/*.yml
+                ./grafana-dashboards-manifest/grafana-dashboards-manifest.yml
+                ./paas-cf/manifests/shared/deployments/collectd.yml
                 ./paas-cf/manifests/cf-manifest/manifest/env-specific/{{cf_env_specific_manifest}}
             run:
               path: sh
@@ -1107,11 +1381,11 @@ jobs:
                     yaml_key_name=$(echo ${cn} | tr A-Z- a-z_)
 
                     echo "Converting ${cn} certs to YAML"
-                    ../paas-cf/concourse/scripts/file-to-yaml.sh secrets ${yaml_key_name}_key ${cn}.key > ${cn}_key.yml
-                    ../paas-cf/concourse/scripts/file-to-yaml.sh secrets ${yaml_key_name}_cert ${cn}.crt > ${cn}_cert.yml
+                    ../paas-cf/concourse/scripts/file_to_yaml.sh secrets ${yaml_key_name}_key ${cn}.key > ${cn}_key.yml
+                    ../paas-cf/concourse/scripts/file_to_yaml.sh secrets ${yaml_key_name}_cert ${cn}.crt > ${cn}_cert.yml
                   done
 
-                  ../paas-cf/concourse/scripts/file-to-yaml.sh secrets uaa_jwt_verification_key uaa_jwt_verification.pem > uaa_jwt_verification_key.yml
+                  ../paas-cf/concourse/scripts/file_to_yaml.sh secrets uaa_jwt_verification_key uaa_jwt_verification.pem > uaa_jwt_verification_key.yml
                   cd ..
 
                   echo "Generating manifests"
@@ -1122,6 +1396,35 @@ jobs:
             put: cf-manifest
             params:
               file: cf-manifest/cf-manifest.yml
+
+        - task: generate-runtime-config
+          config:
+            platform: linux
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/spruce
+            inputs:
+              - name: paas-cf
+            outputs:
+              - name: runtime-config
+            params:
+              MANIFEST_STUBS: |
+                ./paas-cf/manifests/cf-manifest/runtime-config/runtime-config-base.yml
+                ./paas-cf/manifests/shared/deployments/collectd.yml
+            run:
+              path: sh
+              args:
+                - -e
+                - -c
+                - |
+                  echo "Generating runtime config..."
+
+                  ./paas-cf/manifests/shared/build_manifest.sh $MANIFEST_STUBS > runtime-config/runtime-config.yml
+          on_success:
+            put: runtime-config
+            params:
+              file: runtime-config/runtime-config.yml
 
   - name: cf-deploy
     serial_groups: [cf-deploy]
@@ -1137,6 +1440,8 @@ jobs:
             passed: ['generate-cf-config']
           - get: cf-manifest
             passed: ['generate-cf-config']
+          - get: runtime-config
+            passed: ['generate-cf-config']
           - get: cf-tfstate
             passed: ['generate-cf-config']
           - get: bosh-secrets
@@ -1144,19 +1449,23 @@ jobs:
           - get: grafana-boshrelease
           - get: paas-haproxy-release
           - get: aws-broker-boshrelease
-          - get: collectd-boshrelease
           - get: os-conf-boshrelease
           - get: cf-secrets
             passed: ['generate-cf-config']
           - get: bosh-CA
           - get: graphite-nozzle
+          - get: logsearch-for-cloudfoundry-boshrelease
           - get: routing-release
+          - get: rep-boshrelease
 
       - aggregate:
         - task: upload-releases
           config:
             platform: linux
-            image: docker:///governmentpaas/bosh-cli
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/bosh-cli
             inputs:
               - name: paas-cf
               - name: bosh-secrets
@@ -1164,9 +1473,10 @@ jobs:
               - name: grafana-boshrelease
               - name: paas-haproxy-release
               - name: aws-broker-boshrelease
-              - name: collectd-boshrelease
               - name: os-conf-boshrelease
               - name: routing-release
+              - name: rep-boshrelease
+              - name: logsearch-for-cloudfoundry-boshrelease
             run:
               path: sh
               args:
@@ -1190,15 +1500,22 @@ jobs:
                   paas-cf/concourse/scripts/bosh_create_and_upload_release.rb aws-broker \
                     {{cf_aws_broker_version}} aws-broker-boshrelease
 
-                  paas-cf/concourse/scripts/bosh_create_and_upload_release.rb collectd \
-                    {{cf_collectd_version}} collectd-boshrelease
-
                   paas-cf/concourse/scripts/bosh_create_and_upload_release.rb routing \
                     {{cf_routing_version}} routing-release
+
+                  paas-cf/concourse/scripts/bosh_create_and_upload_release.rb rep \
+                    {{cf_rep_version}} rep-boshrelease
+
+                  paas-cf/concourse/scripts/bosh_create_and_upload_release.rb logsearch-for-cloudfoundry \
+                    {{cf_logsearch_for_cloudfoundry_version}} logsearch-for-cloudfoundry-boshrelease
+
         - task: get-and-upload-stemcell
           config:
             platform: linux
-            image: docker:///governmentpaas/bosh-cli
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/bosh-cli
             inputs:
               - name: bosh-secrets
               - name: paas-cf
@@ -1220,7 +1537,10 @@ jobs:
         - task: update-cloud-config
           config:
             platform: linux
-            image: docker:///governmentpaas/bosh-cli
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/bosh-cli
             inputs:
               - name: cloud-config
               - name: bosh-secrets
@@ -1237,11 +1557,15 @@ jobs:
       - task: cf-deploy
         config:
           platform: linux
-          image: docker:///governmentpaas/bosh-cli
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/bosh-cli
           inputs:
             - name: paas-cf
             - name: cf-manifest
             - name: bosh-secrets
+            - name: runtime-config
           outputs:
             - name: updated-cf-manifest
           run:
@@ -1253,7 +1577,7 @@ jobs:
                 ./paas-cf/concourse/scripts/bosh_login.sh {{bosh_fqdn}} bosh-secrets/bosh-secrets.yml
                 sed -e "s/^director_uuid:.*/director_uuid: $(bosh status --uuid)/" < cf-manifest/cf-manifest.yml > updated-cf-manifest/cf-manifest.yml
                 bosh deployment updated-cf-manifest/cf-manifest.yml
-                bosh update runtime-config paas-cf/manifests/cf-manifest/manifest/runtime/runtime.yml
+                bosh update runtime-config runtime-config/runtime-config.yml
                 bosh -n deploy
       - put: cf-manifest
         params:
@@ -1271,7 +1595,11 @@ jobs:
           outputs:
             - name: config
           params:
-          image: docker:///ruby#2.2-slim
+          image_resource:
+            type: docker-image
+            source:
+              repository: ruby
+              tag: 2.2-slim
           run:
             path: sh
             args:
@@ -1309,7 +1637,10 @@ jobs:
               - name: config
               - name: cf-manifest
             params:
-            image: docker:///governmentpaas/cf-cli
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/cf-cli
             run:
               path: sh
               args:
@@ -1332,7 +1663,10 @@ jobs:
               - name: config
               - name: cf-manifest
             params:
-            image: docker:///governmentpaas/cf-cli
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/cf-cli
             run:
               path: sh
               args:
@@ -1347,11 +1681,14 @@ jobs:
 
                   ./paas-cf/concourse/scripts/set_quotas_from_manifest.rb cf-manifest/cf-manifest.yml
 
-
         - task: sync-admin-users
           config:
             platform: linux
-            image: docker:///ruby#2.2
+            image_resource:
+              type: docker-image
+              source:
+                repository: ruby
+                tag: "2.2"
             inputs:
               - name: paas-cf
               - name: config
@@ -1379,7 +1716,10 @@ jobs:
         - task: register-rds-broker
           config:
             platform: linux
-            image: docker:///governmentpaas/cf-cli
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/cf-cli
             inputs:
               - name: paas-cf
               - name: config
@@ -1411,7 +1751,10 @@ jobs:
               - name: config
               - name: bosh-CA
             params:
-            image: docker:///governmentpaas/cf-cli
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/cf-cli
             run:
               path: sh
               args:
@@ -1461,7 +1804,36 @@ jobs:
                       PREFIX_JOB: "true"
                   EOF
 
-                  cf push
+                  ../paas-cf/concourse/scripts/cf_push_on_git_change.sh graphite-nozzle
+
+        - task: update-kibana-timezone
+          config:
+            platform: linux
+            image_resource:
+              type: docker-image
+              source:
+                repository: ruby
+                tag: 2.2-slim
+            params:
+              SYSTEM_DNS_ZONE_NAME: {{system_dns_zone_name}}
+              DEPLOY_ENV: {{deploy_env}}
+            inputs:
+            - name: paas-cf
+            - name: cf-tfstate
+            run:
+              path: sh
+              args:
+              - -e
+              - -c
+              - |
+                VAL_FROM_YAML=$(pwd)/paas-cf/concourse/scripts/val_from_yaml.rb
+                SCRIPTS_PATH="./paas-cf/concourse/scripts"
+                TF_VARS_SCRIPT="extract_tf_vars_from_terraform_state.rb"
+                $SCRIPTS_PATH/$TF_VARS_SCRIPT < cf-tfstate/cf.tfstate | grep logsearch_elastic_master_elb_dns_name > ./logsearch_var.sh
+                . ./logsearch_var.sh
+                export ES_HOST="${TF_VAR_logsearch_elastic_master_elb_dns_name}"
+                export ES_PORT="9200"
+                $(pwd)/paas-cf/concourse/scripts/kibana_set_utc.rb
 
   - name: post-deploy
     plan:
@@ -1476,6 +1848,7 @@ jobs:
           - get: cf-secrets
             passed: ['cf-deploy']
           - get: bosh-CA
+          - get: cf-tfstate
 
       - task: retrieve-config
         config:
@@ -1487,7 +1860,11 @@ jobs:
           outputs:
             - name: config
           params:
-          image: docker:///ruby#2.2-slim
+          image_resource:
+            type: docker-image
+            source:
+              repository: ruby
+              tag: 2.2-slim
           run:
             path: sh
             args:
@@ -1507,11 +1884,18 @@ jobs:
       - task: deploy-healthcheck
         config:
           platform: linux
-          image: docker:///governmentpaas/cf-cli
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/cf-cli
+          params:
+            ENABLE_HEALTHCHECK_DB: {{enable_healthcheck_db}}
           inputs:
             - name: paas-cf
             - name: config
             - name: bosh-CA
+          outputs:
+            - name: deployed-healthcheck
           run:
             path: sh
             args:
@@ -1527,17 +1911,25 @@ jobs:
                 cf set-quota testers test_apps
                 cf create-space healthcheck -o testers
                 cf target -o testers -s healthcheck
+                BUILD_ROOT=$(pwd)
                 cd paas-cf/platform-tests/example-apps/healthcheck
                 cf push --no-start
-
-                cf create-service postgres M-dedicated-9.5 healthcheck-db
-                while ! cf service healthcheck-db | grep -q 'Status: create succeeded'; do
-                  echo "Waiting for creation of service to complete..."
-                  sleep 30
-                done
-                cf bind-service healthcheck healthcheck-db
+                if  [ "$ENABLE_HEALTHCHECK_DB" != "false" ] ; then
+                  cf create-service postgres M-dedicated-9.5 healthcheck-db
+                  while ! cf service healthcheck-db | grep -q 'Status: create succeeded'; do
+                    echo "Waiting for creation of service to complete..."
+                    sleep 30
+                  done
+                  cf bind-service healthcheck healthcheck-db
+                fi
 
                 cf start healthcheck
+                cd $BUILD_ROOT
+                echo "yes" > deployed-healthcheck/healthcheck-deployed
+        on_success:
+          put: deployed-healthcheck
+          params:
+            file: deployed-healthcheck/healthcheck-deployed
 
   - name: smoke-tests
     serial_groups: [smoke-tests]
@@ -1561,9 +1953,8 @@ jobs:
       - do:
         - task: create-temp-user
           file: paas-cf/concourse/tasks/create_admin.yml
-          config:
-            params:
-              PREFIX: smoketest-user
+          params:
+            PREFIX: smoketest-user
 
         - task: smoke-tests-config
           file: paas-cf/concourse/tasks/smoke-tests-config.yml
@@ -1596,14 +1987,17 @@ jobs:
       - do:
         - task: create-temp-user
           file: paas-cf/concourse/tasks/create_admin.yml
-          config:
-            params:
-              PREFIX: acceptance-test-user
+          params:
+            PREFIX: acceptance-test-user
+            ENABLE_ADMIN_USER_CREATION: {{enable_cf_acceptance_tests}}
 
         - task: generate-test-config
           config:
             platform: linux
-            image: docker:///governmentpaas/bosh-cli
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/bosh-cli
             inputs:
               - name: cf-release
               - name: paas-cf
@@ -1624,7 +2018,6 @@ jobs:
                   my['properties']['acceptance_tests']['password'] = File.read('admin-creds/password').strip()
 
                   puts YAML.dump(my)" > acceptance_test_properties.yml
-                  cat acceptance_test_properties.yml
 
                   ./paas-cf/platform-tests/bosh-template-renderer/render.rb \
                     ./cf-release/jobs/acceptance-tests/templates/run.erb \
@@ -1643,7 +2036,12 @@ jobs:
         - task: run-tests
           config:
             platform: linux
-            image: docker:///governmentpaas/cf-acceptance-tests
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/cf-acceptance-tests
+            params:
+              ENABLE_CF_ACCEPTANCE_TESTS: {{enable_cf_acceptance_tests}}
             inputs:
               - name: paas-cf
               - name: cf-release
@@ -1663,11 +2061,16 @@ jobs:
                   ln -snf $(pwd)/test-config/run /var/vcap/jobs/acceptance-tests/bin/run
                   ln -snf /usr/local/go /var/vcap/packages/golang1.6
                   ln -snf $(pwd)/cf-release/src/github.com/cloudfoundry/cf-acceptance-tests /var/vcap/packages/acceptance-tests/src/github.com/cloudfoundry/
-                  /var/vcap/jobs/acceptance-tests/bin/run
-
+                  if  [ "$ENABLE_CF_ACCEPTANCE_TESTS" != "false" ]; then
+                    /var/vcap/jobs/acceptance-tests/bin/run
+                  else
+                    echo "WARNING: The acceptance tests have been disabled. Set ENABLE_CF_ACCEPTANCE_TESTS=true when uploading the pipelines to enable them. You can still hijack this container to run them manually, but you must update the admin user in ./test-config/config.json."
+                  fi
         ensure:
           task: remove-temp-user
           file: paas-cf/concourse/tasks/delete_admin.yml
+          params:
+            ENABLE_ADMIN_USER_CREATION: {{enable_cf_acceptance_tests}}
 
   - name: custom-acceptance-tests
     plan:
@@ -1686,9 +2089,8 @@ jobs:
       - do:
         - task: create-temp-user
           file: paas-cf/concourse/tasks/create_admin.yml
-          config:
-            params:
-              PREFIX: custom-acceptance-test-user
+          params:
+            PREFIX: custom-acceptance-test-user
 
         - task: generate-test-config
           file: paas-cf/concourse/tasks/generate-test-config.yml
@@ -1696,7 +2098,10 @@ jobs:
         - task: run-tests
           config:
             platform: linux
-            image: docker:///governmentpaas/cf-acceptance-tests
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/cf-acceptance-tests
             inputs:
               - name: paas-cf
               - name: test-config
@@ -1731,7 +2136,11 @@ jobs:
       - task: test-bosh-cli
         config:
           platform: linux
-          image: docker:///ruby#2.2-slim
+          image_resource:
+            type: docker-image
+            source:
+              repository: ruby
+              tag: 2.2-slim
           params:
             SYSTEM_DNS_ZONE_NAME: {{system_dns_zone_name}}
             DEPLOY_ENV: {{deploy_env}}
@@ -1745,14 +2154,17 @@ jobs:
             - -c
             - |
               VAL_FROM_YAML=$(pwd)/paas-cf/concourse/scripts/val_from_yaml.rb
-              CONCOURSE_ATC_PASSWORD=$("$VAL_FROM_YAML" jobs.concourse.properties.atc.basic_auth_password concourse-manifest/concourse-manifest.yml)
+              CONCOURSE_ATC_PASSWORD=$("$VAL_FROM_YAML" jobs.concourse.properties.basic_auth_password concourse-manifest/concourse-manifest.yml)
               export CONCOURSE_ATC_PASSWORD
               echo Looking for non running VMs
               ./paas-cf/concourse/scripts/bosh-cli.sh bosh status
       - task: test-bosh-vms
         config:
           platform: linux
-          image: docker:///governmentpaas/bosh-cli
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/bosh-cli
           inputs:
           - name: paas-cf
           - name: cf-manifest
@@ -1785,9 +2197,8 @@ jobs:
       - do:
         - task: create-temp-user
           file: paas-cf/concourse/tasks/create_admin.yml
-          config:
-            params:
-              PREFIX: performance-tests-user
+          params:
+            PREFIX: performance-tests-user
 
         - task: generate-test-config
           file: paas-cf/concourse/tasks/generate-test-config.yml
@@ -1795,7 +2206,10 @@ jobs:
         - task: run-tests
           config:
             platform: linux
-            image: docker:///governmentpaas/cf-acceptance-tests
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/cf-acceptance-tests
             inputs:
               - name: paas-cf
               - name: test-config
@@ -1831,7 +2245,10 @@ jobs:
 
       - task: tag-release
         config:
-          image: docker:///governmentpaas/git-ssh
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/git-ssh
           platform: linux
           params:
             aws_account: {{aws_account}}
@@ -1852,7 +2269,7 @@ jobs:
                 echo \$TAG_PREFIX not set, skipping
                 exit 0
               fi
-              paas-cf/concourse/scripts/tag-release.sh \
+              paas-cf/concourse/scripts/tag_release.sh \
                 ${TAG_PREFIX} ${aws_account} ${deploy_env} ${TAG_FILTER}
 
   - name: pipeline-unlock
@@ -1871,7 +2288,10 @@ jobs:
       - get: pipeline-pool
       - task: print-pipeline-lock-state
         config:
-          image: docker:///governmentpaas/git-ssh
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/git-ssh
           platform: linux
           inputs:
           - name: pipeline-pool
@@ -1911,7 +2331,10 @@ jobs:
     plan:
       - task: ssh-keygen
         config:
-          image: docker:///governmentpaas/git-ssh
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/awscli
           platform: linux
           outputs:
           - name: generated-git-keys
@@ -1960,27 +2383,28 @@ jobs:
 
   - name: continuous-smoke-tests
     serial_groups: [smoke-tests]
+    build_logs_to_retain: 10000
     plan:
-      - get: cf-release
-        params:
-          submodules:
-            - src/smoke-tests
-      - get: paas-cf
-        passed: ['cf-deploy']
-      - get: cf-manifest
-        passed: ['cf-deploy']
-      - get: bosh-CA
-      - get: smoke-tests-timer
-        trigger: {{continuous_smoke_tests_trigger}}
-      - get: cf-secrets
-        passed: ['cf-deploy']
+      - aggregate:
+        - get: cf-release
+          params:
+            submodules:
+              - src/smoke-tests
+        - get: paas-cf
+          passed: ['cf-deploy']
+        - get: cf-manifest
+          passed: ['cf-deploy']
+        - get: bosh-CA
+        - get: smoke-tests-timer
+          trigger: {{continuous_smoke_tests_trigger}}
+        - get: cf-secrets
+          passed: ['cf-deploy']
 
       - do:
         - task: create-temp-user
           file: paas-cf/concourse/tasks/create_admin.yml
-          config:
-            params:
-              PREFIX: cont-smoketest-user
+          params:
+            PREFIX: cont-smoketest-user
 
         - task: smoke-tests-config
           file: paas-cf/concourse/tasks/smoke-tests-config.yml
@@ -1991,7 +2415,10 @@ jobs:
             task: alert
             config:
               platform: linux
-              image: docker:///governmentpaas/awscli
+              image_resource:
+                type: docker-image
+                source:
+                  repository: governmentpaas/awscli
               params:
                 AWS_DEFAULT_REGION: {{aws_region}}
                 DEPLOY_ENV: {{deploy_env}}
@@ -2012,3 +2439,33 @@ jobs:
         ensure:
           task: remove-temp-user
           file: paas-cf/concourse/tasks/delete_admin.yml
+
+  - name: bosh-cli
+    plan:
+      - aggregate:
+          - get: paas-cf
+          - get: bosh-secrets
+          - get: cf-manifest
+
+      - task: run-bosh-cli
+        config:
+          platform: linux
+          # FIXME: use image_resource once https://github.com/concourse/fly/issues/98 is implemented
+          image: docker:///governmentpaas/bosh-cli
+          inputs:
+            - name: paas-cf
+            - name: cf-manifest
+            - name: bosh-secrets
+          params:
+            SYSTEM_DNS_ZONE_NAME: {{system_dns_zone_name}}
+          run:
+            path: sh
+            args:
+            - -c
+            - -e
+            - |
+              ./paas-cf/concourse/scripts/bosh_login.sh bosh.${SYSTEM_DNS_ZONE_NAME} bosh-secrets/bosh-secrets.yml
+
+              uuid=$(bosh status --uuid)
+              sed -e "s/^director_uuid:.*$/director_uuid: ${uuid}/" cf-manifest/cf-manifest.yml > cf-manifest-with-uuid.yml
+              bosh deployment ./cf-manifest-with-uuid.yml
