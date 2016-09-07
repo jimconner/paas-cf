@@ -6,36 +6,32 @@ director_uuid: ~
 
 releases:
   - name: cf
-    version: 239
-    url: https://bosh.io/d/github.com/cloudfoundry/cf-release?v=239
-    sha1: 4d1d000ccdf34918738420a710f295977790df28
+    version: 240
+    url: https://bosh.io/d/github.com/cloudfoundry/cf-release?v=240
+    sha1: 7dba7cc0c9c4beca699d8c876ac046890e13bb9e
   - name: diego
-    version: 0.1476.0
-    url: https://bosh.io/d/github.com/cloudfoundry/diego-release?v=0.1480.0
-    sha1: c5c1cdde94665a55152f69238bb7476a124c3efd
+    version: 0.1482.0
+    url: https://bosh.io/d/github.com/cloudfoundry/diego-release?v=0.1482.0
+    sha1: 4d7740d58d2245b531d5fb5a3c87ab55cdd4a76b
   - name: garden-linux
-    version: 0.339.0
-    url: https://bosh.io/d/github.com/cloudfoundry-incubator/garden-linux-release?v=0.339.0
-    sha1: fe72f86b00f9630b885d1b7ec74ccdb4788fb5c4
+    version: 0.341.0
+    url: https://bosh.io/d/github.com/cloudfoundry/garden-linux-release?v=0.341.0
+    sha1: 9d95512cc32d5a356928539af111dbfd16333d40
   - name: etcd
-    version: 60
-    url: https://bosh.io/d/github.com/cloudfoundry-incubator/etcd-release?v=60
-    sha1: 66d233c86dd97760facb890f77777757317e9c86
+    version: 64
+    url: https://bosh.io/d/github.com/cloudfoundry-incubator/etcd-release?v=64
+    sha1: 7345569e73c80681124d3cd97a3dc1be372b0381
   - name: cflinuxfs2-rootfs
-    version: 1.18.0
-    url: https://bosh.io/d/github.com/cloudfoundry/cflinuxfs2-rootfs-release?v=1.18.0
-    sha1: 7ed6c55b53477cd96d7030aa8fa6e1c0cb1f4637
+    version: 1.22.0
+    url: https://bosh.io/d/github.com/cloudfoundry/cflinuxfs2-rootfs-release?v=1.22.0
+    sha1: bf95dfc4593e1a9f291e4bb3e50c85575483e618
   - name: paas-haproxy
     version: 0.0.4
-  - name: routing
-    version: commit-0bad6993f4cb87fa6213fa957f4e8eacbd22f762
-  - name: rep
-    version: 0.0.1
 
 stemcells:
   - alias: default
     name: bosh-aws-xen-hvm-ubuntu-trusty-go_agent
-    version: "3232.11"
+    version: "3262.9"
 
 update:
   canaries: 0
@@ -43,3 +39,4 @@ update:
   canary_watch_time: 30000-600000
   update_watch_time: 5000-600000
   serial: false
+
