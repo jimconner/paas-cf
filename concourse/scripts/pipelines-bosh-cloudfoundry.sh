@@ -75,8 +75,6 @@ cf_graphite_version: ${cf_graphite_version}
 cf_grafana_version: ${cf_grafana_version}
 cf_aws_broker_version: ${cf_aws_broker_version}
 cf_os_conf_version: ${cf_os_conf_version}
-cf_routing_version: ${cf_routing_version}
-cf_rep_version: ${cf_rep_version}
 cf_logsearch_for_cloudfoundry_version: ${cf_logsearch_for_cloudfoundry_version}
 cf_env_specific_manifest: ${ENV_SPECIFIC_CF_MANIFEST}
 paas_cf_tag_filter: ${PAAS_CF_TAG_FILTER:-}
