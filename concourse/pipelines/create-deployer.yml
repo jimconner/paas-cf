@@ -59,6 +59,12 @@ resources:
       bucket: {{state_bucket}}
       versioned_file: concourse-manifest.yml
       region_name: {{aws_region}}
+  - name: ssh-private-key
+    type: s3-iam
+    source:
+      bucket: {{state_bucket}}
+      versioned_file: id_rsa
+      region_name: {{aws_region}}
 
   - name: concourse-ssh-private-key
     type: s3-iam
