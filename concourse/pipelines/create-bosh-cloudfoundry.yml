@@ -67,11 +67,6 @@ groups:
       - continuous-smoke-tests
 
 resource_types:
-- name: git-gpg
-  type: docker-image
-  source:
-    repository: governmentpaas/git-resource
-
 - name: s3-iam
   type: docker-image
   source:
@@ -91,7 +86,7 @@ resources:
       key: {{pipeline_trigger_file}}
 
   - name: paas-cf
-    type: git-gpg
+    type: git
     source:
       uri: https://github.com/jimconner/paas-cf.git
       branch: {{branch_name}}
@@ -110,12 +105,6 @@ resources:
       uri: https://github.com/alphagov/paas-graphite-statsd-boshrelease.git
       tag_filter: {{cf_graphite_version}}
       branch: gds_master
-
-  - name: grafana-boshrelease
-    type: git
-    source:
-      uri: https://github.com/alphagov/paas-grafana-boshrelease.git
-      tag_filter: {{cf_grafana_version}}
 
   - name: aws-broker-boshrelease
     type: git
@@ -242,6 +231,13 @@ resources:
       versioned_file: cf.tfstate
       region_name: eu-west-1
 
+  - name: datadog-tfstate
+    type: s3-iam
+    source:
+      bucket: {{state_bucket}}
+      versioned_file: datadog.tfstate
+      region_name: eu-west-1
+
   - name: cf-secrets
     type: s3-iam
     source:
@@ -329,9 +325,11 @@ jobs:
   - name: pipeline-lock
     serial: true
     plan:
-      - get: paas-cf
-        trigger: {{auto_deploy}}
-      - get: git-ssh-private-key
+      - aggregate:
+        - get: paas-cf
+          trigger: {{auto_deploy}}
+        - get: git-ssh-private-key
+        - get: concourse-manifest
       - task: init-pipeline-pool
         config:
           platform: linux
@@ -363,19 +361,6 @@ jobs:
       - put: pipeline-pool
         params:
           claim: lock
-      - put: pipeline-trigger
-        params: {bump: patch}
-
-  - name: init
-    serial_groups: [bosh-deploy]
-    serial: true
-    plan:
-      - get: pipeline-trigger
-        trigger: true
-        passed: ['pipeline-lock']
-      - get: paas-cf
-        passed: ['pipeline-lock']
-      - get: concourse-manifest
       - task: self-update-pipeline
         config:
           platform: linux
@@ -395,7 +380,19 @@ jobs:
             BOSH_AZ: {{bosh_az}}
           run:
             path: ./paas-cf/concourse/scripts/self-update-pipeline.sh
+      - put: pipeline-trigger
+        params: {bump: patch}
 
+
+  - name: init
+    serial_groups: [bosh-deploy]
+    serial: true
+    plan:
+      - get: pipeline-trigger
+        trigger: true
+        passed: ['pipeline-lock']
+      - get: paas-cf
+        passed: ['pipeline-lock']
       - task: bootstrap-s3-state
         config:
           platform: linux
@@ -419,6 +416,7 @@ jobs:
                 paas-cf/concourse/scripts/s3init.sh {{state_bucket}} cf.tfstate paas-cf/concourse/init_files/terraform.tfstate.tpl
                 paas-cf/concourse/scripts/s3init.sh {{state_bucket}} cf-certs.tar.gz paas-cf/concourse/init_files/empty.tar.gz
                 paas-cf/concourse/scripts/s3init.sh {{state_bucket}} cf-certs.tfstate paas-cf/concourse/init_files/terraform.tfstate.tpl
+                paas-cf/concourse/scripts/s3init.sh {{state_bucket}} datadog.tfstate paas-cf/concourse/init_files/terraform.tfstate.tpl
                 paas-cf/concourse/scripts/s3init.sh {{state_bucket}} git-keys.tar.gz paas-cf/concourse/init_files/empty.tar.gz
                 paas-cf/concourse/scripts/s3init.sh {{state_bucket}} bosh_id_rsa paas-cf/concourse/init_files/zero_bytes
                 paas-cf/concourse/scripts/s3init.sh {{state_bucket}} bosh_id_rsa.pub paas-cf/concourse/init_files/zero_bytes
@@ -466,9 +464,7 @@ jobs:
               - |
                 if  [ -z "$(tar -tvzf existing-bosh-CA/bosh-CA.tar.gz)" ] ; then
                   certstrap init --passphrase "" --common-name bosh-CA
-                  cd out
-                  tar -cvzf ../generated-bosh-CA/bosh-CA.tar.gz bosh-CA.*
-                  cd ..
+                  (cd out && tar -cvzf ../generated-bosh-CA/bosh-CA.tar.gz bosh-CA.*)
                 else
                   echo "The CA cert already exists, skipping generation..."
                   cp existing-bosh-CA/bosh-CA.tar.gz generated-bosh-CA/bosh-CA.tar.gz
@@ -767,9 +763,12 @@ jobs:
 
                 ./paas-cf/concourse/scripts/import_bosh_ca.sh
 
-                export CONCOURSE_ATC_PASSWORD=$(awk '/basic_auth_password/ { print $2 }' concourse-manifest/concourse-manifest.yml | tr -d '"')
-                export CONCOURSE_ATC_URL=https://deployer.${SYSTEM_DNS_ZONE_NAME}
-                export PIPELINE_TRIGGER_VERSION=$(cat pipeline-trigger/number)
+                export CONCOURSE_ATC_PASSWORD
+                CONCOURSE_ATC_PASSWORD=$(awk '/basic_auth_password/ { print $2 }' concourse-manifest/concourse-manifest.yml | tr -d '"')
+                export CONCOURSE_ATC_URL
+                CONCOURSE_ATC_URL=https://deployer.${SYSTEM_DNS_ZONE_NAME}
+                export PIPELINE_TRIGGER_VERSION
+                PIPELINE_TRIGGER_VERSION=$(cat pipeline-trigger/number)
 
                 echo "Running tests"
                 ./paas-cf/platform-tests/run_tests.sh ./paas-cf/platform-tests/src/availability
@@ -943,6 +942,9 @@ jobs:
           outputs:
             - name: bosh-manifest
           params:
+            AWS_ACCOUNT: {{aws_account}}
+            DATADOG_API_KEY: {{datadog_api_key}}
+            ENABLE_DATADOG: {{enable_datadog}}
             BOSH_MANIFEST_STUBS: |
               ./paas-cf/manifests/bosh-manifest/deployments/*.yml
               ./paas-cf/manifests/bosh-manifest/deployments/aws/*.yml
@@ -957,6 +959,11 @@ jobs:
               - -e
               - -c
               - |
+                if [ "${ENABLE_DATADOG}" = "true" ] ; then
+                   BOSH_MANIFEST_STUBS="${BOSH_MANIFEST_STUBS}
+                                        ./paas-cf/manifests/bosh-manifest/extensions/datadog-agent.yml
+                                        ./paas-cf/manifests/shared/deployments/datadog-agent.yml"
+                fi
                 ./paas-cf/manifests/shared/build_manifest.sh $BOSH_MANIFEST_STUBS > bosh-manifest/bosh-manifest.yml
         on_success:
           put: bosh-manifest
@@ -1052,7 +1059,7 @@ jobs:
               - -e
               - -c
               - |
-                if [ "${SKIP_UPLOAD_GENERATED_CERTS}" == "true" ]; then
+                if [ "${SKIP_UPLOAD_GENERATED_CERTS}" = "true" ]; then
                   cp cf-certs-tfstate/cf-certs.tfstate updated-tfstate/cf-certs.tfstate
                   echo "Using pre-uploaded public certificates for ${TF_VAR_env}"
                 else
@@ -1095,10 +1102,11 @@ jobs:
               - |
                 curl -Lfqs https://www.pingdom.com/rss/probe_servers.xml > probe_servers.xml
                 IPS_PER_BLOCK=32
+                # shellcheck disable=SC2002
                 cat probe_servers.xml | \
                   grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | \
                   sort | uniq | sed 's/$/\/32/' | xargs -n ${IPS_PER_BLOCK} | tr ' ' ',' | \
-                  awk '{print "export TF_VAR_pingdom_probe_cidrs_" NR-1 "=" $0}'\
+                  awk '{print "export TF_VAR_pingdom_probe_cidrs_" NR-1 "=" $0}' \
                   > pingdom-probes-ips/pingdom-probes-ips.sh
 
       - task: extract-terraform-variables
@@ -1350,11 +1358,17 @@ jobs:
                 ./certs/*.yml
                 ./grafana-dashboards-manifest/grafana-dashboards-manifest.yml
                 ./paas-cf/manifests/shared/deployments/collectd.yml
+                ./paas-cf/manifests/shared/deployments/datadog-agent.yml
                 ./paas-cf/manifests/cf-manifest/manifest/env-specific/{{cf_env_specific_manifest}}
+                ./paas-cf/manifests/cf-manifest/common/*.yml
+              AWS_ACCOUNT: {{aws_account}}
+              ENABLE_DATADOG: {{enable_datadog}}
+              DATADOG_API_KEY: {{datadog_api_key}}
             run:
               path: sh
               args:
                 - -e
+                - -u
                 - -c
                 - |
                   mkdir certs
@@ -1373,9 +1387,15 @@ jobs:
                   done
 
                   ../paas-cf/concourse/scripts/file_to_yaml.sh secrets uaa_jwt_verification_key uaa_jwt_verification.pem > uaa_jwt_verification_key.yml
-                  cd ..
+                  # shellcheck disable=SC2103
+                  cd .. || true
 
                   echo "Generating manifests"
+
+                  if [ "${ENABLE_DATADOG}" = "true" ] ; then
+                     MANIFEST_STUBS="${MANIFEST_STUBS}
+                                    ./paas-cf/manifests/cf-manifest/stubs/datadog-nozzle.yml"
+                  fi
 
                   # FIXME: Remove eval after https://github.com/concourse/concourse/issues/360
                   eval ./paas-cf/manifests/shared/build_manifest.sh $MANIFEST_STUBS > cf-manifest/cf-manifest.yml
@@ -1393,12 +1413,18 @@ jobs:
                 repository: governmentpaas/spruce
             inputs:
               - name: paas-cf
+              - name: terraform-outputs
             outputs:
               - name: runtime-config
             params:
+              DATADOG_API_KEY: {{datadog_api_key}}
+              ENABLE_DATADOG: {{enable_datadog}}
+              AWS_ACCOUNT: {{aws_account}}
               MANIFEST_STUBS: |
                 ./paas-cf/manifests/cf-manifest/runtime-config/runtime-config-base.yml
                 ./paas-cf/manifests/shared/deployments/collectd.yml
+                ./paas-cf/manifests/cf-manifest/common/*.yml
+                ./terraform-outputs/*.yml
             run:
               path: sh
               args:
@@ -1406,6 +1432,12 @@ jobs:
                 - -c
                 - |
                   echo "Generating runtime config..."
+
+                  if [ "${ENABLE_DATADOG}" = "true" ] ; then
+                     MANIFEST_STUBS="${MANIFEST_STUBS}
+                                    ./paas-cf/manifests/cf-manifest/runtime-config/datadog-agent-addon.yml
+                                    ./paas-cf/manifests/shared/deployments/datadog-agent.yml"
+                  fi
 
                   ./paas-cf/manifests/shared/build_manifest.sh $MANIFEST_STUBS > runtime-config/runtime-config.yml
           on_success:
@@ -1433,7 +1465,6 @@ jobs:
             passed: ['generate-cf-config']
           - get: bosh-secrets
           - get: graphite-statsd-boshrelease
-          - get: grafana-boshrelease
           - get: paas-haproxy-release
           - get: aws-broker-boshrelease
           - get: os-conf-boshrelease
@@ -1442,6 +1473,7 @@ jobs:
           - get: bosh-CA
           - get: graphite-nozzle
           - get: logsearch-for-cloudfoundry-boshrelease
+          - get: datadog-tfstate
 
       - aggregate:
         - task: upload-releases
@@ -1455,7 +1487,6 @@ jobs:
               - name: paas-cf
               - name: bosh-secrets
               - name: graphite-statsd-boshrelease
-              - name: grafana-boshrelease
               - name: paas-haproxy-release
               - name: aws-broker-boshrelease
               - name: os-conf-boshrelease
@@ -1470,9 +1501,6 @@ jobs:
 
                   paas-cf/concourse/scripts/bosh_create_and_upload_release.rb graphite \
                     {{cf_graphite_version}} graphite-statsd-boshrelease
-
-                  paas-cf/concourse/scripts/bosh_create_and_upload_release.rb grafana \
-                    {{cf_grafana_version}} grafana-boshrelease
 
                   paas-cf/concourse/scripts/bosh_create_and_upload_release.rb paas-haproxy \
                     {{cf-paas-haproxy-release-version}} paas-haproxy-release
@@ -1685,7 +1713,8 @@ jobs:
                   . ./config/config.sh
 
                   VAL_FROM_YAML=$(pwd)/paas-cf/concourse/scripts/val_from_yaml.rb
-                  export UAA_CLIENT_SECRET=$($VAL_FROM_YAML secrets.uaa_admin_client_secret cf-secrets/cf-secrets.yml)
+                  export UAA_CLIENT_SECRET
+                  UAA_CLIENT_SECRET=$($VAL_FROM_YAML secrets.uaa_admin_client_secret cf-secrets/cf-secrets.yml)
                   cd paas-cf/scripts
                   bundle
                   bundle exec sync-admin-users.rb ${API_ENDPOINT} ../config/admin_users.yml "{{NEW_ACCOUNT_EMAIL_ADDRESS}}"
@@ -1803,14 +1832,59 @@ jobs:
               - -e
               - -c
               - |
-                VAL_FROM_YAML=$(pwd)/paas-cf/concourse/scripts/val_from_yaml.rb
-                SCRIPTS_PATH="./paas-cf/concourse/scripts"
-                TF_VARS_SCRIPT="extract_tf_vars_from_terraform_state.rb"
-                $SCRIPTS_PATH/$TF_VARS_SCRIPT < cf-tfstate/cf.tfstate | grep logsearch_elastic_master_elb_dns_name > ./logsearch_var.sh
-                . ./logsearch_var.sh
-                export ES_HOST="${TF_VAR_logsearch_elastic_master_elb_dns_name}"
+                SCRIPT_DIR="./paas-cf/concourse/scripts"
+
+                ruby "${SCRIPT_DIR}/extract_terraform_state_to_yaml.rb" \
+                  < cf-tfstate/cf.tfstate \
+                  > cf-tfstate.yaml
+
+                export ES_HOST
+                ES_HOST=$(ruby "${SCRIPT_DIR}/val_from_yaml.rb" terraform_outputs.logsearch_elastic_master_elb_dns_name cf-tfstate.yaml)
                 export ES_PORT="9200"
-                $(pwd)/paas-cf/concourse/scripts/kibana_set_utc.rb
+                ruby "${SCRIPT_DIR}/kibana_set_utc.rb"
+
+        - task: datadog-terraform-apply
+          config:
+            platform: linux
+            image_resource:
+              type: docker-image
+              source:
+                repository: governmentpaas/terraform
+            inputs:
+              - name: datadog-tfstate
+              - name: paas-cf
+            outputs:
+              - name: updated-tfstate
+            params:
+              TF_VAR_env: {{deploy_env}}
+              TF_VAR_datadog_api_key: {{datadog_api_key}}
+              TF_VAR_datadog_app_key: {{datadog_app_key}}
+              ENABLE_DATADOG: {{enable_datadog}}
+            run:
+              path: sh
+              args:
+                - -e
+                - -c
+                - |
+                  if [ -n "${TF_VAR_datadog_api_key}" ] && [ -n "${TF_VAR_datadog_app_key}" ] && [ "${ENABLE_DATADOG}" = "false" ]; then
+                    echo "Datadog disabled but keys present, running check cleanup..."
+                    terraform destroy -force \
+                       -state=datadog-tfstate/datadog.tfstate \
+                       -state-out=updated-tfstate/datadog.tfstate \
+                       paas-cf/terraform/datadog
+                    exit 0
+                  fi
+
+                  if [ "${ENABLE_DATADOG}" = "true" ]; then
+                    terraform apply -state=datadog-tfstate/datadog.tfstate -state-out=updated-tfstate/datadog.tfstate paas-cf/terraform/datadog
+                  else
+                    echo "Datadog disabled, skipping terraform run..."
+                    cp datadog-tfstate/datadog.tfstate updated-tfstate/datadog.tfstate
+                  fi
+          ensure:
+            put: datadog-tfstate
+            params:
+              file: updated-tfstate/datadog.tfstate
 
   - name: post-deploy
     plan:
@@ -1825,7 +1899,6 @@ jobs:
           - get: cf-secrets
             passed: ['cf-deploy']
           - get: bosh-CA
-          - get: cf-tfstate
 
       - task: retrieve-config
         config:
@@ -2092,7 +2165,8 @@ jobs:
                   ./paas-cf/concourse/scripts/import_bosh_ca.sh
 
                   echo "Running tests"
-                  export CONFIG="$(pwd)/test-config/config.json"
+                  export CONFIG
+                  CONFIG="$(pwd)/test-config/config.json"
                   ./paas-cf/platform-tests/run_tests.sh ./paas-cf/platform-tests/src/acceptance/
 
         ensure:
@@ -2117,7 +2191,7 @@ jobs:
             type: docker-image
             source:
               repository: ruby
-              tag: 2.2-slim
+              tag: "2.2"
           params:
             SYSTEM_DNS_ZONE_NAME: {{system_dns_zone_name}}
             DEPLOY_ENV: {{deploy_env}}
@@ -2131,7 +2205,7 @@ jobs:
             - -c
             - |
               VAL_FROM_YAML=$(pwd)/paas-cf/concourse/scripts/val_from_yaml.rb
-              CONCOURSE_ATC_PASSWORD=$("$VAL_FROM_YAML" jobs.concourse.properties.basic_auth_password concourse-manifest/concourse-manifest.yml)
+              CONCOURSE_ATC_PASSWORD=$("$VAL_FROM_YAML" jobs.concourse.templates.atc.properties.basic_auth_password concourse-manifest/concourse-manifest.yml)
               export CONCOURSE_ATC_PASSWORD
               echo Looking for non running VMs
               ./paas-cf/concourse/scripts/bosh-cli.sh bosh status
@@ -2200,7 +2274,8 @@ jobs:
                   ./paas-cf/concourse/scripts/import_bosh_ca.sh
 
                   echo "Running tests"
-                  export CONFIG="$(pwd)/test-config/config.json"
+                  export CONFIG
+                  CONFIG="$(pwd)/test-config/config.json"
                   ./paas-cf/platform-tests/run_tests.sh ./paas-cf/platform-tests/src/performance/
 
         ensure:
@@ -2256,6 +2331,47 @@ jobs:
         passed: ['tag-release']
         trigger: true
       - get: pipeline-pool
+      - task: update-datadog
+        config:
+          image_resource:
+            type: docker-image
+            source:
+              repository: governmentpaas/git-ssh
+          platform: linux
+          params:
+            DATADOG_API_KEY: {{datadog_api_key}}
+            ENV: {{deploy_env}}
+            AWS_ACCOUNT: {{aws_account}}
+            ENABLE_DATADOG: {{enable_datadog}}
+          inputs:
+          - name: pipeline-pool
+          run:
+            path: sh
+            args:
+            - -e
+            - -c
+            - |
+              cd pipeline-pool
+              current_time=$(date +%s)
+              lock_time=$(git log -1  --pretty=format:'%ct')
+              delta=$((current_time - lock_time))
+              echo "Total pipeline time was: ${delta}s"
+
+              if [ "${ENABLE_DATADOG}" = "true" ]; then
+                curl  -X POST -H "Content-type: application/json" \
+                  -d "{ \"series\" :
+                         [{\"metric\":\"concourse.pipeline_time\",
+                          \"points\":[[$current_time, ${delta}]],
+                          \"type\":\"gauge\",
+                          \"tags\":[
+                            \"environment:${ENV}\",
+                            \"pipeline_name:create-bosh-cloudfoundry\",
+                            \"aws_account:${AWS_ACCOUNT}\"
+                          ]}
+                        ]
+                    }" \
+                  "https://app.datadoghq.com/api/v1/series?api_key=${DATADOG_API_KEY}"
+              fi
       - put: pipeline-pool
         params:
           release: pipeline-pool
@@ -2403,7 +2519,6 @@ jobs:
                 ALERT_EMAIL_ADDRESS: {{ALERT_EMAIL_ADDRESS}}
               inputs:
                 - name: paas-cf
-                - name: smoke-tests-log
               run:
                 path: sh
                 args:

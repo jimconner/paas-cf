@@ -269,7 +269,7 @@ jobs:
           - |
             tar xzvf concourse-cert/concourse-cert.tar.gz
             if [ -f concourse.crt ] && [ -f concourse.key ]; then
-              echo Certificate and private key already created, nothing to do
+              echo "Certificate and private key already created, nothing to do"
               cp concourse-cert/concourse-cert.tar.gz generated-concourse-cert/
               exit 0
             fi
@@ -328,7 +328,8 @@ jobs:
             cp concourse-ssh-key/concourse_id_rsa.pub paas-cf/terraform/concourse
             tar xzvf generated-concourse-cert/concourse-cert.tar.gz
             . vpc-terraform-outputs/tfvars.sh
-            export TF_VAR_git_rsa_id_pub=$(cat git-ssh-public-key/git_id_rsa.pub)
+            export TF_VAR_git_rsa_id_pub
+            TF_VAR_git_rsa_id_pub=$(cat git-ssh-public-key/git_id_rsa.pub)
             terraform_params=${VAGRANT_IP:+-var vagrant_cidr=$VAGRANT_IP/32}
             terraform apply ${terraform_params} \
               -var-file=paas-cf/terraform/{{aws_account}}.tfvars \
@@ -444,6 +445,9 @@ jobs:
       config:
         image: docker:///governmentpaas/spruce
         params:
+          AWS_ACCOUNT: {{aws_account}}
+          DATADOG_API_KEY: {{datadog_api_key}}
+          ENABLE_DATADOG: {{enable_datadog}}
           CONCOURSE_MANIFEST_STUBS: |
             ./paas-cf/manifests/concourse-manifest/concourse-base.yml
             predefined-concourse-secrets/predefined-concourse-secrets.yml
@@ -464,6 +468,11 @@ jobs:
           - -e
           - -c
           - |
+            if [ "${ENABLE_DATADOG}" = "true" ] ; then
+               CONCOURSE_MANIFEST_STUBS="${CONCOURSE_MANIFEST_STUBS}
+                              ./paas-cf/manifests/concourse-manifest/extensions/datadog-agent.yml
+                              ./paas-cf/manifests/shared/deployments/datadog-agent.yml"
+            fi
             ./paas-cf/manifests/shared/build_manifest.sh $CONCOURSE_MANIFEST_STUBS \
               > concourse-manifest/concourse-manifest.yml
             ls -l concourse-manifest/concourse-manifest.yml
@@ -590,7 +599,8 @@ jobs:
           - -c
           - |
             . vpc-terraform-outputs/tfvars.sh
-            export TF_VAR_git_rsa_id_pub=$(cat git-ssh-public-key/git_id_rsa.pub)
+            export TF_VAR_git_rsa_id_pub
+            TF_VAR_git_rsa_id_pub=$(cat git-ssh-public-key/git_id_rsa.pub)
             terraform apply -target=aws_security_group.concourse \
               -state=concourse-terraform-state/concourse.tfstate -state-out=concourse.tfstate \
               -var-file=paas-cf/terraform/{{aws_account}}.tfvars paas-cf/terraform/concourse

@@ -1,10 +1,5 @@
 ---
 resource_types:
-- name: git-gpg
-  type: docker-image
-  source:
-    repository: governmentpaas/git-resource
-
 - name: s3-iam
   type: docker-image
   source:
@@ -17,7 +12,7 @@ resource_types:
 
 resources:
   - name: paas-cf
-    type: git-gpg
+    type: git
     source:
       uri: https://github.com/jimconner/paas-cf.git
       branch: {{branch_name}}
@@ -356,10 +351,6 @@ jobs:
     serial: true
     plan:
       - aggregate:
-          - get: cf-release
-            params:
-              submodules:
-                - src/smoke-tests
           - get: paas-cf
           - get: cf-manifest
           - get: cf-secrets
@@ -404,7 +395,8 @@ jobs:
                   ./paas-cf/concourse/scripts/import_bosh_ca.sh
 
                   echo "Running tests"
-                  export CONFIG="$(pwd)/test-config/config.json"
+                  export CONFIG
+                  CONFIG="$(pwd)/test-config/config.json"
                   export GINKGO_FOCUS='RDS broker'
                   ./paas-cf/platform-tests/run_tests.sh ./paas-cf/platform-tests/src/acceptance/
 

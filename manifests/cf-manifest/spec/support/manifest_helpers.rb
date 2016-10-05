@@ -21,7 +21,13 @@ module ManifestHelpers
 
 private
 
+  def fake_env_vars
+    ENV["AWS_ACCOUNT"] = "dev"
+    ENV["DATADOG_API_KEY"] = "abcd1234"
+  end
+
   def render(arg_list)
+    fake_env_vars
     output, error, status = Open3.capture3(arg_list.join(' '))
     expect(status).to be_success, "build_manifest.sh exited #{status.exitstatus}, stderr:\n#{error}"
     output
@@ -49,11 +55,14 @@ private
         File.expand_path("../../../../shared/build_manifest.sh", __FILE__),
         File.expand_path("../../../manifest/*.yml", __FILE__),
         File.expand_path("../../../manifest/data/*.yml", __FILE__),
+        grafana_dashboards_manifest_path,
+        File.expand_path("../../../manifest/env-specific/cf-#{environment}.yml", __FILE__),
+        File.expand_path("../../../../shared/deployments/datadog-agent.yml", __FILE__),
+        File.expand_path("../../../common/*.yml", __FILE__),
+        File.expand_path("../../../stubs/datadog-nozzle.yml", __FILE__),
         File.expand_path("../../../../shared/spec/fixtures/terraform/*.yml", __FILE__),
         File.expand_path("../../../../shared/spec/fixtures/cf-secrets.yml", __FILE__),
         File.expand_path("../../../../shared/spec/fixtures/cf-ssl-certificates.yml", __FILE__),
-        grafana_dashboards_manifest_path,
-        File.expand_path("../../../manifest/env-specific/cf-#{environment}.yml", __FILE__),
     ])
 
     cloud_config = render([
@@ -76,7 +85,11 @@ private
     runtime_config = render([
       File.expand_path("../../../../shared/build_manifest.sh", __FILE__),
       File.expand_path("../../../runtime-config/runtime-config-base.yml", __FILE__),
-      File.expand_path("../../../../shared/deployments/collectd.yml", __FILE__)
+      File.expand_path("../../../runtime-config/datadog-agent-addon.yml", __FILE__),
+      File.expand_path("../../../../shared/deployments/datadog-agent.yml", __FILE__),
+      File.expand_path("../../../../shared/deployments/collectd.yml", __FILE__),
+      File.expand_path("../../../common/*.yml", __FILE__),
+      File.expand_path("../../../../shared/spec/fixtures/terraform/*.yml", __FILE__),
     ])
 
     # Deep freeze the object so that it's safe to use across multiple examples

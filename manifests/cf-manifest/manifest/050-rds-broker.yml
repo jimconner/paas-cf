@@ -19,7 +19,7 @@ meta:
 
 releases:
   - name: aws-broker
-    version: 0.0.8
+    version: 0.0.9
 
 jobs:
   - name: rds_broker
@@ -33,6 +33,9 @@ jobs:
     networks:
       - name: cf
     properties:
+      tags:
+        job: rds_broker
+        tags: (( inject meta.datadog_tags ))
       rds-broker:
         aws_access_key_id: ""
         aws_secret_access_key: ""

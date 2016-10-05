@@ -228,12 +228,14 @@ Acceptance tests can be optionally disabled by setting the environment
 variable `ENABLE_CF_ACCEPTANCE_TESTS=false`.
 
 ```
-ENABLE_CF_ACCEPTANCE_TESTS=false make dev pipelines
+ENABLE_CF_ACCEPTANCE_TESTS=false SELF_UPDATE_PIPELINE=false make dev pipelines
 ```
 
 It is enabled in all the environments except in `staging` and `prod`.
 This will only disable the execution of the test, but the job will
 be still configured in concourse.
+
+*Note:* `SELF_UPDATE_PIPELINE` is also disabled because enabling it would result in the first run immediately enabling the acceptance tests again.
 
 ## Optionally run specific job in the create-bosh-cloudfoundry pipeline
 
@@ -249,6 +251,15 @@ This will not only tigger the job, but before that it will modify the pipeline
 to remove `passed` dependencies for `paas-cf` in the specified job. This means
 that your job will pick the latest changes to `paas-cf` directly, without the
 need to run the pipeline from start in order to bring the changes forward.
+
+## Optionally deploy datadog agent in dev environment
+
+If you want to deploy datadog agent in your dev environment, set ENABLE_DATADOG
+variable to true:
+
+```
+ENABLE_DATADOG=true make dev pipelines
+```
 
 ## Sharing your Bootstrap Concourse
 
@@ -405,3 +416,9 @@ Visit [BOSH failover page](https://github.com/alphagov/paas-cf/blob/master/doc/b
 
 ## Pingdom checks
 Visit [Pingdom documentation page](https://github.com/alphagov/paas-cf/blob/master/doc/pingdom.md)
+
+## Datadog credentials
+These must be published in each new environment. Visit the [Datadog documentation page](https://github.com/alphagov/paas-cf/blob/master/doc/datadog.md)
+
+## Other useful commands
+Type `make` to get the list of all available commands.

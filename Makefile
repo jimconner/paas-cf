@@ -5,6 +5,7 @@
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
+MIN_TERRAFORM_VERSION=0.7.3
 SHELLCHECK=shellcheck
 YAMLLINT=yamllint
 
@@ -17,7 +18,10 @@ check-env-vars:
 	$(if ${DEPLOY_ENV_VALID_LENGTH},,$(error Sorry, DEPLOY_ENV ($(DEPLOY_ENV)) has a max length of $(DEPLOY_ENV_MAX_LENGTH), otherwise derived names will be too long))
 	$(if ${DEPLOY_ENV_VALID_CHARS},,$(error Sorry, DEPLOY_ENV ($(DEPLOY_ENV)) must use only alphanumeric chars and hyphens, otherwise derived names will be malformatted))
 
-test: spec lint_yaml lint_terraform lint_shellcheck lint_concourse lint_ruby ## Run linting tests
+check-tf-version:
+	@./terraform/scripts/ensure_terraform_version.sh $(MIN_TERRAFORM_VERSION)
+
+test: spec lint_yaml lint_terraform lint_shellcheck lint_concourse lint_ruby lint_posix_newlines ## Run linting tests
 
 spec:
 	cd scripts &&\
@@ -49,22 +53,35 @@ lint_shellcheck:
 	find . -name '*.sh' -not -path '*/vendor/*' | xargs $(SHELLCHECK)
 
 lint_concourse:
-	cd .. && python paas-cf/concourse/scripts/pipecleaner.py paas-cf/concourse/pipelines/*.yml
+	cd .. && SHELLCHECK_OPTS="-e SC1091,SC2034,SC2046,SC2086" python paas-cf/concourse/scripts/pipecleaner.py --fatal-warnings paas-cf/concourse/pipelines/*.yml
 
 .PHONY: lint_ruby
 lint_ruby:
 	bundle exec govuk-lint-ruby
 
+.PHONY: lint_posix_newlines
+lint_posix_newlines:
+	git ls-files | grep -v vendor/ | xargs ./scripts/test_posix_newline.sh
+
+GPG = $(shell command -v gpg2 || command -v gpg)
+
 .PHONY: list_merge_keys
 list_merge_keys: ## List all GPG keys allowed to sign merge commits.
+	$(if $(GPG),,$(error "gpg2 or gpg not found in PATH"))
 	@for key in $$(cat .gpg-id); do \
 		printf "$${key}: "; \
-		gpg --list-keys --with-colons $$key 2> /dev/null | awk -F: '/^pub/ {found = 1; print $$10} END {if (found != 1) {print "*** not found in local keychain ***"}}'; \
+		if [ "$$($(GPG) --version | awk 'NR==1 { split($$3,version,"."); print version[1]}')" = "2" ]; then \
+			$(GPG) --list-keys --with-colons $$key 2> /dev/null | awk -F: '/^uid/ {found = 1; print $$10; exit} END {if (found != 1) {print "*** not found in local keychain ***"}}'; \
+		else \
+			$(GPG) --list-keys --with-colons $$key 2> /dev/null | awk -F: '/^pub/ {found = 1; print $$10} END {if (found != 1) {print "*** not found in local keychain ***"}}'; \
+		fi;\
 	done
 
 .PHONY: globals
+PASSWORD_STORE_DIR?=${HOME}/.paas-pass
 globals:
 	$(eval export AWS_DEFAULT_REGION=eu-west-1)
+	$(eval export PASSWORD_STORE_DIR=${PASSWORD_STORE_DIR})
 	@true
 
 .PHONY: dev
@@ -78,6 +95,7 @@ dev: globals check-env-vars ## Set Environment to DEV
 	$(eval export SKIP_COMMIT_VERIFICATION=true)
 	$(eval export ENV_SPECIFIC_CF_MANIFEST=cf-default.yml)
 	$(eval export ENABLE_HEALTHCHECK_DB=false)
+	$(eval export ENABLE_DATADOG ?= false)
 	@true
 
 .PHONY: ci
@@ -91,6 +109,8 @@ ci: globals check-env-vars ## Set Environment to CI
 	$(eval export ALERT_EMAIL_ADDRESS=the-multi-cloud-paas-team+ci@digital.cabinet-office.gov.uk)
 	$(eval export NEW_ACCOUNT_EMAIL_ADDRESS=${ALERT_EMAIL_ADDRESS})
 	$(eval export ENV_SPECIFIC_CF_MANIFEST=cf-default.yml)
+	$(eval export ENABLE_DATADOG=true)
+	$(eval export DECRYPT_CONCOURSE_ATC_PASSWORD=ci_deployments/master)
 	@true
 
 .PHONY: staging
@@ -107,6 +127,8 @@ staging: globals check-env-vars ## Set Environment to Staging
 	$(eval export NEW_ACCOUNT_EMAIL_ADDRESS=${ALERT_EMAIL_ADDRESS})
 	$(eval export ENV_SPECIFIC_CF_MANIFEST=cf-default.yml)
 	$(eval export ENABLE_CF_ACCEPTANCE_TESTS=false)
+	$(eval export ENABLE_DATADOG=true)
+	$(eval export DECRYPT_CONCOURSE_ATC_PASSWORD=staging_deployment)
 	@true
 
 .PHONY: prod
@@ -122,6 +144,8 @@ prod: globals check-env-vars ## Set Environment to Production
 	$(eval export NEW_ACCOUNT_EMAIL_ADDRESS=${ALERT_EMAIL_ADDRESS})
 	$(eval export ENV_SPECIFIC_CF_MANIFEST=cf-prod.yml)
 	$(eval export ENABLE_CF_ACCEPTANCE_TESTS=false)
+	$(eval export ENABLE_DATADOG=true)
+	$(eval export DECRYPT_CONCOURSE_ATC_PASSWORD=prod_deployment)
 	@true
 
 .PHONY: bootstrap
@@ -148,9 +172,17 @@ showenv: ## Display environment information
 		--query 'Reservations[].Instances[].PublicIpAddress' --output text)
 	@concourse/scripts/environment.sh
 
+.PHONY: upload-datadog-secrets
+upload-datadog-secrets: check-env-vars ## Decrypt and upload Datadog credentials to S3
+	$(eval export DATADOG_PASSWORD_STORE_DIR?=${HOME}/.paas-pass)
+	$(if ${AWS_ACCOUNT},,$(error Must set environment to ci/staging/prod))
+	$(if ${DATADOG_PASSWORD_STORE_DIR},,$(error Must pass DATADOG_PASSWORD_STORE_DIR=<path_to_password_store>))
+	$(if $(wildcard ${DATADOG_PASSWORD_STORE_DIR}),,$(error Password store ${DATADOG_PASSWORD_STORE_DIR} does not exist))
+	@scripts/upload-datadog-secrets.sh
+
 .PHONY: manually_upload_certs
 CERT_PASSWORD_STORE_DIR?=~/.paas-pass-high
-manually_upload_certs: ## Manually upload to AWS the SSL certificates for public facing endpoints
+manually_upload_certs: check-tf-version ## Manually upload to AWS the SSL certificates for public facing endpoints
 	$(if ${ACTION},,$(error Must pass ACTION=<plan|apply|...>))
 	# check password store and if varables are accesible
 	$(if ${CERT_PASSWORD_STORE_DIR},,$(error Must pass CERT_PASSWORD_STORE_DIR=<path_to_password_store>))
@@ -158,7 +190,7 @@ manually_upload_certs: ## Manually upload to AWS the SSL certificates for public
 	@terraform/scripts/manually-upload-certs.sh ${ACTION}
 
 .PHONY: pingdom
-pingdom: ## Use custom Terraform provider to set up Pingdom check
+pingdom: check-tf-version ## Use custom Terraform provider to set up Pingdom check
 	$(if ${ACTION},,$(error Must pass ACTION=<plan|apply|...>))
 	$(eval export PASSWORD_STORE_DIR?=~/.paas-pass)
 	$(eval export PINGDOM_CONTACT_IDS=11089310)
@@ -173,8 +205,20 @@ find_diverged_forks: ## Check all github forks belonging to paas to see if they'
 	./scripts/find_diverged_forks.py alphagov --prefix=paas --extra-repo=cf-release --extra-repo=graphite-nozzle --github-token=${GITHUB_TOKEN}
 
 .PHONY: run_job
-run_job: check-env-vars ##  Unbind paas-cf of $JOB in create-bosh-cloudfoundry pipeline and then trigger it
+run_job: check-env-vars ## Unbind paas-cf of $JOB in create-bosh-cloudfoundry pipeline and then trigger it
 	$(if ${JOB},,$(error Must pass JOB=<name>))
 	./concourse/scripts/run_job.sh ${JOB}
+
 ssh_concourse: check-env-vars ## SSH to the concourse server
 	@./concourse/scripts/ssh.sh
+
+tunnel: check-env-vars ## SSH tunnel to internal IPs
+	$(if ${TUNNEL},,$(error Must pass TUNNEL=SRC_PORT:HOST:DST_PORT))
+	@./concourse/scripts/ssh.sh ${TUNNEL}
+
+stop-tunnel: check-env-vars ## Stop SSH tunnel
+	@./concourse/scripts/ssh.sh stop
+
+show-cf-memory-usage: ## Show the memory usage of the current CF cluster
+	$(eval export API_ENDPOINT=https://api.${SYSTEM_DNS_ZONE_NAME})
+	@./scripts/show-cf-memory-usage.rb

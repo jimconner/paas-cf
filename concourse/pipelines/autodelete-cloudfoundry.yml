@@ -1,10 +1,5 @@
 ---
 resource_types:
-- name: git-gpg
-  type: docker-image
-  source:
-    repository: governmentpaas/git-resource
-
 - name: s3-iam
   type: docker-image
   source:
@@ -17,7 +12,7 @@ resource_types:
 
 resources:
   - name: paas-cf
-    type: git-gpg
+    type: git
     source:
       uri: https://github.com/jimconner/paas-cf.git
       branch: {{branch_name}}
@@ -66,6 +61,13 @@ resources:
       region_name: {{aws_region}}
       versioned_file: healthcheck-deployed
 
+  - name: datadog-tfstate
+    type: s3-iam
+    source:
+      bucket: {{state_bucket}}
+      versioned_file: datadog.tfstate
+      region_name: eu-west-1
+
 jobs:
   - name: delete
     serial: true
@@ -77,12 +79,25 @@ jobs:
       - get: cf-secrets
       - get: cf-manifest
       - get: bosh-CA
+      - get: datadog-tfstate
 
       - task: get-cf-cli-config
         file: paas-cf/concourse/tasks/get-cf-cli-config.yml
 
       - task: remove-healthcheck-db
         file: paas-cf/concourse/tasks/remove-healthcheck-db.yml
+
+      - task: datadog-TF-destroy
+        file: paas-cf/concourse/tasks/terraform_destroy_datadog.yml
+        params:
+          TF_VAR_datadog_api_key: {{datadog_api_key}}
+          TF_VAR_datadog_app_key: {{datadog_app_key}}
+          TF_VAR_env: {{deploy_env}}
+          ENABLE_DATADOG: {{enable_datadog}}
+        ensure:
+          put: datadog-tfstate
+          params:
+            file: updated-datadog-tfstate/datadog.tfstate
 
       - task: delete-deployment
         config:
@@ -108,7 +123,7 @@ jobs:
               # how it works.
               - |
                 sum=$(echo {{deploy_env}} | md5sum);
-                short=${sum:0:15};
+                short=$(echo $sum | cut -b 1-15)
                 decimal=$((0x$short));
                 sleeptime=$((${decimal##-} % 60*20));
                 echo "Sleeping for $sleeptime seconds before deletion.."

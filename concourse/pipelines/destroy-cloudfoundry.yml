@@ -1,10 +1,5 @@
 ---
 resource_types:
-- name: git-gpg
-  type: docker-image
-  source:
-    repository: governmentpaas/git-resource
-
 - name: s3-iam
   type: docker-image
   source:
@@ -17,7 +12,7 @@ resource_types:
 
 resources:
   - name: paas-cf
-    type: git-gpg
+    type: git
     source:
       uri: https://github.com/jimconner/paas-cf.git
       branch: {{branch_name}}
@@ -36,6 +31,13 @@ resources:
     source:
       bucket: {{state_bucket}}
       versioned_file: cf-certs.tfstate
+      region_name: eu-west-1
+
+  - name: datadog-tfstate
+    type: s3-iam
+    source:
+      bucket: {{state_bucket}}
+      versioned_file: datadog.tfstate
       region_name: eu-west-1
 
   - name: concourse-tfstate
@@ -149,12 +151,25 @@ jobs:
           - get: paas-cf
           - get: cf-secrets
           - get: cf-manifest
+          - get: datadog-tfstate
 
       - task: get-cf-cli-config
         file: paas-cf/concourse/tasks/get-cf-cli-config.yml
 
       - task: remove-healthcheck-db
         file: paas-cf/concourse/tasks/remove-healthcheck-db.yml
+
+      - task: datadog-TF-destroy
+        file: paas-cf/concourse/tasks/terraform_destroy_datadog.yml
+        params:
+          TF_VAR_datadog_api_key: {{datadog_api_key}}
+          TF_VAR_datadog_app_key: {{datadog_app_key}}
+          TF_VAR_env: {{deploy_env}}
+          ENABLE_DATADOG: {{enable_datadog}}
+        ensure:
+          put: datadog-tfstate
+          params:
+            file: updated-datadog-tfstate/datadog.tfstate
 
       - task: delete-deployment
         config:

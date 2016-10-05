@@ -6,9 +6,7 @@ director_uuid: ~
 
 releases:
   - name: cf
-    version: 240
-    url: https://bosh.io/d/github.com/cloudfoundry/cf-release?v=240
-    sha1: 7dba7cc0c9c4beca699d8c876ac046890e13bb9e
+    data: (( inject meta.cf-releases.cf ))
   - name: diego
     version: 0.1482.0
     url: https://bosh.io/d/github.com/cloudfoundry/diego-release?v=0.1482.0
@@ -27,6 +25,10 @@ releases:
     sha1: bf95dfc4593e1a9f291e4bb3e50c85575483e618
   - name: paas-haproxy
     version: 0.0.4
+  - name: uaa
+    version: "12.6"
+    url: https://bosh.io/d/github.com/cloudfoundry/uaa-release?v=12.6
+    sha1: 8ffc7b9bfee004464bc8a81c322db7160dd7440f
 
 stemcells:
   - alias: default
@@ -35,7 +37,7 @@ stemcells:
 
 update:
   canaries: 0
-  max_in_flight: 2
+  max_in_flight: 1
   canary_watch_time: 30000-600000
   update_watch_time: 5000-600000
   serial: false

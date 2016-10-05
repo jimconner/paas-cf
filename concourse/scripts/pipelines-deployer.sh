@@ -8,7 +8,12 @@ export TARGET_CONCOURSE=bootstrap
 $("${SCRIPT_DIR}/environment.sh" "$@")
 "${SCRIPT_DIR}/fly_sync_and_login.sh"
 
+# shellcheck source=./concourse/scripts/lib/datadog.sh
+. "${SCRIPT_DIR}/lib/datadog.sh"
+
 env=${DEPLOY_ENV}
+
+get_datadog_secrets
 
 generate_vars_file() {
    cat <<EOF
@@ -24,6 +29,9 @@ concourse_atc_password: ${CONCOURSE_ATC_PASSWORD}
 log_level: ${LOG_LEVEL:-}
 paas_cf_tag_filter: ${PAAS_CF_TAG_FILTER:-}
 system_dns_zone_name: ${SYSTEM_DNS_ZONE_NAME}
+aws_account: ${AWS_ACCOUNT:-dev}
+datadog_api_key: ${datadog_api_key:-}
+enable_datadog: ${ENABLE_DATADOG}
 EOF
 }
 

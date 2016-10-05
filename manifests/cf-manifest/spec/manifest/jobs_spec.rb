@@ -12,7 +12,12 @@ RSpec.describe "the jobs definitions block" do
   let(:jobs) { manifest_with_defaults["jobs"] }
 
   def get_job(job_name)
-    jobs.select { |j| j["name"] == job_name }.first
+    job = jobs.select { |j| j["name"] == job_name }.first
+    if job == nil
+      raise "No job named '#{job_name}' known. Known jobs are #{jobs.collect { |job_hash| job_hash['name'] }}"
+    else
+      job
+    end
   end
 
   matcher :be_updated_serially do
@@ -21,9 +26,11 @@ RSpec.describe "the jobs definitions block" do
     end
   end
 
-  matcher :be_ordered_before do |later_job|
-    match do |earlier_job|
-      jobs.index { |j| j["name"] == earlier_job } < jobs.index { |j| j["name"] == later_job }
+  matcher :be_ordered_before do |later_job_name|
+    match do |earlier_job_name|
+      later_job = get_job(later_job_name)
+      earlier_job = get_job(earlier_job_name)
+      jobs.index { |j| j == earlier_job } < jobs.index { |j| j == later_job }
     end
   end
 
@@ -34,6 +41,13 @@ RSpec.describe "the jobs definitions block" do
 
     it "has nats before etcd" do
       expect("nats").to be_ordered_before("etcd")
+    end
+  end
+
+  describe "in order to ensure high availability of ingestor" do
+    it "has ingestor serial" do
+      expect("ingestor_z1").to be_updated_serially
+      expect("ingestor_z2").to be_updated_serially
     end
   end
 
@@ -96,5 +110,17 @@ RSpec.describe "the jobs definitions block" do
       expect(j["templates"].first["name"]).to eq("consul_agent"),
         "expected '#{j['name']}' job to list 'consul_agent' first"
     }
+  end
+
+  describe "in order to monitor all hosts via datadog" do
+    it "has datadog tags on each job" do
+      jobs.each { |job|
+        expect(job["properties"]["tags"]).not_to be_nil, "job '#{job['name']}' is missing the datadog 'tags' property"
+        expect(job["properties"]["tags"]["job"]).to eq(job["name"]),
+          "job '#{job['name']}' should have a tag 'job=#{job['name']}' instead of #{job['properties']['tags']['job']}"
+        expect(job["properties"]["tags"]["environment"]).to eq("unit-test")
+        expect(job["properties"]["tags"]["aws_account"]).to eq(ENV["AWS_ACCOUNT"])
+      }
+    end
   end
 end

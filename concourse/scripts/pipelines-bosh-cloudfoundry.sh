@@ -6,6 +6,9 @@ export TARGET_CONCOURSE=deployer
 # shellcheck disable=SC2091
 $("${SCRIPT_DIR}/environment.sh" "$@")
 
+# shellcheck disable=SC1090
+. "${SCRIPT_DIR}/lib/datadog.sh"
+
 download_git_id_rsa() {
   git_id_rsa_file=$(mktemp -t id_rsa.XXXXXX)
 
@@ -21,7 +24,9 @@ get_git_concourse_pool_clone_full_url_ssh() {
 
   aws s3 cp "s3://${env}-state/concourse.tfstate" "${tfstate_file}"
 
-  git_concourse_pool_clone_full_url_ssh=$(awk -F '"' '/git_concourse_pool_clone_full_url_ssh/ {print $4}' "${tfstate_file}")
+  git_concourse_pool_clone_full_url_ssh=$(ruby < "${tfstate_file}" -rjson -e \
+    'puts JSON.load(STDIN)["modules"][0]["outputs"]["git_concourse_pool_clone_full_url_ssh"]["value"]'
+  )
 
   rm -f "${tfstate_file}"
 }
@@ -36,13 +41,12 @@ prepare_environment() {
   bosh_az=${BOSH_AZ:-eu-west-1a}
 
   cf_manifest_dir="${SCRIPT_DIR}/../../manifests/cf-manifest/manifest"
-  cf_release_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.cf.version "${cf_manifest_dir}/000-base-cf-deployment.yml")
+  cf_release_version=$("${SCRIPT_DIR}"/val_from_yaml.rb meta.cf-releases.cf.version "${cf_manifest_dir}/../common/releases.yml")
   cf_paas_haproxy_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.paas-haproxy.version "${cf_manifest_dir}/000-base-cf-deployment.yml")
   cf_graphite_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.graphite.version "${cf_manifest_dir}/040-graphite.yml")
-  cf_grafana_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.grafana.version "${cf_manifest_dir}/040-graphite.yml")
   cf_aws_broker_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.aws-broker.version "${cf_manifest_dir}/050-rds-broker.yml")
   cf_os_conf_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.os-conf.version "${cf_manifest_dir}/../runtime-config/runtime-config-base.yml")
-  cf_logsearch_for_cloudfoundry_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.logsearch-for-cloudfoundry.version "${cf_manifest_dir}/030-logsearch.yml")
+  cf_logsearch_for_cloudfoundry_version=$("${SCRIPT_DIR}"/val_from_yaml.rb releases.logsearch-for-cloudfoundry.version "${cf_manifest_dir}/800-logsearch.yml")
 
   if [ -z "${SKIP_COMMIT_VERIFICATION:-}" ] ; then
     gpg_ids="[$(xargs < "${SCRIPT_DIR}/../../.gpg-id" | tr ' ' ',')]"
@@ -52,6 +56,9 @@ prepare_environment() {
 
   download_git_id_rsa
   get_git_concourse_pool_clone_full_url_ssh
+  get_datadog_secrets
+
+  export EXPOSE_PIPELINE=1
 }
 
 generate_vars_file() {
@@ -72,7 +79,6 @@ debug: ${DEBUG:-}
 cf-release-version: v${cf_release_version}
 cf-paas-haproxy-release-version: ${cf_paas_haproxy_version}
 cf_graphite_version: ${cf_graphite_version}
-cf_grafana_version: ${cf_grafana_version}
 cf_aws_broker_version: ${cf_aws_broker_version}
 cf_os_conf_version: ${cf_os_conf_version}
 cf_logsearch_for_cloudfoundry_version: ${cf_logsearch_for_cloudfoundry_version}
@@ -89,6 +95,9 @@ bosh_az: ${bosh_az}
 bosh_manifest_state: bosh-manifest-state-${bosh_az}.json
 bosh_fqdn: bosh.${SYSTEM_DNS_ZONE_NAME}
 enable_cf_acceptance_tests: ${ENABLE_CF_ACCEPTANCE_TESTS:-true}
+datadog_api_key: ${datadog_api_key:-}
+datadog_app_key: ${datadog_app_key:-}
+enable_datadog: ${ENABLE_DATADOG}
 EOF
   echo -e "pipeline_lock_git_private_key: |\n  ${git_id_rsa//$'\n'/$'\n'  }"
 }
