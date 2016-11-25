@@ -6,8 +6,8 @@ Vagrant.require_version ">= 1.8.0"
 AWS_ACCOUNT = ENV.fetch("AWS_ACCOUNT", "dev")
 AWS_ACCOUNT_DATA = {
   "dev" => {
-    :subnet_id => "subnet-d37f61a5", # us-east-1e in default VPC, 172.31.32.0/20 range
-    :security_group => "sg-b2e2d7c9", # "Bootstrap Concourse" security group
+    :subnet_id => "subnet-2dbdb910", # us-east-1e in default VPC, 172.31.32.0/20 range
+    :security_group => "sg-fa8ba481", # "Bootstrap Concourse" security group
   },
   "ci" => {
     subnet_id: "subnet-68bb7e30", # us-east-1a in default VPC, 172.31.16.0/20 range

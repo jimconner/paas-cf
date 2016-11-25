@@ -47,7 +47,7 @@ output "compiled_cache_bucket_host" {
 }
 
 output "compiled_cache_bucket_name" {
-  value = "shared-bosh-blobstore-cf-workloady"
+  value = "shared-bosh-blobstore-cf-workloadx"
 }
 
 output "bosh_blobstore_bucket_name" {
