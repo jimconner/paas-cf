@@ -127,5 +127,5 @@ variable "elb_account_ids" {
 
 variable "assets_prefix" {
   description = "Prefix for global assests like S3 buckets"
-  default = "workloadx.paasmule"
+  default = "workloady.paasmule"
 }
